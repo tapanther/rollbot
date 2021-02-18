@@ -14,7 +14,11 @@ simple_numeric_pattern = re.compile(
 )
 
 base_roll_string = re.compile(
-    r'(?P<num_dice>\d+)[dD](?P<dice_type>\d+|[A-Z]+)'
+    r'(?P<num_dice>\d+)[dD](?P<dice_type>\d+|[A-Z]+)(?P<options>.*?)'
+)
+
+supported_operators = re.compile(
+    r'([+-])'
 )
 
 
@@ -39,6 +43,16 @@ class UnknownDiceValueError(UnknownDiceTypeError):
 
     def __str__(self):
         return f'{self.dice_roll} has no value in {self.dice_type}. {self.message}'
+
+
+class UnknownOperationError(Exception):
+    def __init__(self, op, message=''):
+        self.op = op
+        self.message = message
+        super().__init__(self.message)
+
+    def __str__(self):
+        return f'{self.op} is not a supported operation. {self.message}'
 
 
 # -------------------------------------------------------------
@@ -109,26 +123,43 @@ def roll_and_decode_dice(num_dice, dice_type):
 
 
 def roll_command(command_str: str):
-    # FIXME - Figure out how to do subtraction too
-    dice_strings = [x.strip() for x in command_str.split('+')]
+    math_strings = [x.strip() for x in supported_operators.split(command_str)]
+    dice_strings = math_strings[::2]
+    operator_strings = math_strings[1::2]
+    operator_strings.insert(0, '+')
 
-    rolls = {}
-    scalars = []
+    rolls = []
 
     for dice_str in dice_strings:
         if num_match := simple_numeric_pattern.match(dice_str):
             # roll is actually just a modifier number
-            scalars.append(int(num_match.group(0)))
+            dice_dict = {
+                'results': [int(num_match.group(0))],
+            }
+        elif dice_str == '':
+            dice_dict = {
+                'results': [0],
+            }
         else:
             roll_match = base_roll_string.match(dice_str)
             num_dice = int(roll_match.group('num_dice'))
             dice_type = roll_match.group('dice_type')
+            dice_options = roll_match.group('options')
             dice_dict = roll_and_decode_dice(num_dice, dice_type)
-            rolls[dice_str] = dice_dict
+            dice_dict['options_str'] = dice_options
 
-    scalar_sum = sum(scalars)
-    dice_sum = sum([sum(x['results']) for x in rolls.values()])
-    total_sum = scalar_sum + dice_sum
+        dice_dict['original_string'] = dice_str
+        rolls.append(dice_dict)
+
+    # Start resolving dice rolls
+    total_sum = 0
+    for op, roll in zip(operator_strings, rolls):
+        if op == '+':
+            total_sum += sum(roll['results'])
+        elif op == '-':
+            total_sum -= sum(roll['results'])
+        else:
+            raise UnknownOperationError(op, f'Used before {roll["original_string"]}')
 
     result_dict = {
         'Total Sum': total_sum,
