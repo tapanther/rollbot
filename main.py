@@ -24,12 +24,45 @@ supported_operators = re.compile(
     r'([+-])'
 )
 
+_options = r'|'.join(
+    [
+        r'r'                # reroll
+        r'k(?!l)',          # keep
+        r'kl',              # keep low
+        r'cs',              # critical success
+        r'cf',              # critical failure
+        r'!',               # explode
+        r'(?<!~)<(?!=)',    # success-lt
+        r'(?<!~)>(?!=)',    # success-gt
+        r'(?<!~)<=',        # success-lte
+        r'(?<!~)>=',        # success-gte
+        r'(?<!~)==',        # success-eq
+        r'~<(?!=)',         # failure-lt
+        r'~>(?!=)',         # failure-gt
+        r'~<=',             # failure-lte
+        r'~>=',             # failure-gte
+        r'~=',              # failure-eq
+        r'b<(?!=)',         # boon-lt
+        r'b>(?!=)',         # boon-gt
+        r'b<=',             # boon-lte
+        r'b>=',             # boon-gte
+        r'b=',              # boon-eq
+        r'c<(?!=)',         # complication-lt
+        r'c>(?!=)',         # complication-gt
+        r'c<=',             # complication-lte
+        r'c>=',             # complication-gte
+        r'c=',              # complication-eq
+    ]
+)
+
 option_pattern = re.compile(
-    r'(?P<op>[a-z]+|!|<(?!=)|>(?!=)|<=|>=)'
+    r'(?P<op>' +
+    _options +
+    r')'
 )
 
 operand_pattern = re.compile(
-    r'''^(\d+|['"]\w+['"])?'''
+    r'''^(\d+|(?:['"])\w+(?:['"]))?'''
 )
 
 # -------------------------------------------------------------
@@ -46,11 +79,18 @@ class DiceRoll:
         self.num_dice = 1
         self.dice_type = '1'
         self.roll_options_str = ''
+        self.default_cmp = '>='
 
         # Setup dependent attributes
         self.sides = 0
         self.map = {}
         self.map_values = {}
+
+        self.successes = None
+        self.failures = None
+
+        self.complications = None
+        self.boons = None
 
         # Do the initial property decode num_dice, dice_type, and roll_options
         # It also applies the map and and values
@@ -108,18 +148,18 @@ class DiceRoll:
             if _debug:
                 print(f'Roll Options: {self.roll_options_str}')
 
-            simple_dice_match = simple_numeric_pattern.match(self.dice_type)
-            # If it can, do it, otherwise try to load the dice info
-            if simple_dice_match:
-                dice_info = {
-                    'sides': int(simple_dice_match.group()),
-                }
-                if dice_info['sides'] < 1:
-                    raise UnknownDiceTypeError(self.dice_type, "Illegal numeric dice!")
-            else:
-                try:
-                    dice_info = _dice_types[self.dice_type]
-                except KeyError:
+            try:
+                dice_info = _dice_types[self.dice_type]
+            except KeyError:
+                simple_dice_match = simple_numeric_pattern.match(self.dice_type)
+                # If it can, do it, otherwise try to load the dice info
+                if simple_dice_match:
+                    dice_info = {
+                        'sides': int(simple_dice_match.group()),
+                    }
+                    if dice_info['sides'] < 1:
+                        raise UnknownDiceTypeError(self.dice_type, "Illegal numeric dice!")
+                else:
                     raise UnknownDiceTypeError(self.dice_type)
 
         dice_map = dice_info['map'] if 'map' in dice_info else range(1, (dice_info['sides'] + 1))
@@ -134,6 +174,11 @@ class DiceRoll:
         option_string = self.roll_options_str[:]
 
         keep_option_found = False
+        threshold_option_found = False
+        fail_threshold_option_found = False
+
+        boon_threshold_found = False
+        complication_threshold_found = False
 
         if _debug:
             print(f'Parsing {option_string}')
@@ -173,9 +218,62 @@ class DiceRoll:
                     raise MissingOperandError('KeepLowest', f'Used in {self.dice_str}')
                 option_dict['keep'] = int(operand)
                 keep_option_found = True
+            elif (op == '<' or op == '<=' or op == '>' or op == '>=' or op == '==') and not threshold_option_found:
+                operand, option_string = get_operand(option_string)
+                # Prep the success counter
+                self.successes = 0
+                if operand is None:
+                    raise MissingOperandError('Compare', f'Used in {self.dice_str}')
+                option_dict['threshold'] = int(operand)
+                option_dict['compare'] = op
+                threshold_option_found = True
+            elif (op == '~<' or op == '~<=' or op == '~>' or op == '~>=' or op == '~=') and not fail_threshold_option_found:
+                operand, option_string = get_operand(option_string)
+                # Prep the success counter
+                self.failures = 0
+                if operand is None:
+                    raise MissingOperandError('Compare', f'Used in {self.dice_str}')
+                option_dict['fail_threshold'] = int(operand)
+                option_dict['fail_compare'] = op
+                threshold_option_found = True
+            elif op == 'cs':
+                operand, option_string = get_operand(option_string)
+                if operand is None:
+                    operand = self.map[self.sides-1]
+                option_dict['crit'] = int(operand)
+                # FIXME - Does it make _any_ sense to count doubles without a threshold?
+                # if 'compare' not in option_dict:
+                #     option_dict['threshold'] = int(operand)
+                #     option_dict['compare'] = self.default_cmp
+                #     self.successes = 0
+            elif op == 'cf':
+                operand, option_string = get_operand(option_string)
+                if operand is None:
+                    raise MissingOperandError('CriticalFailure', f'Used in {self.dice_str}')
+                option_dict['crit_fail'] = int(operand)
+            elif (op == 'c<' or op == 'c<=' or op == 'c>' or op == 'c>=' or op == 'c=') and \
+                    not complication_threshold_found:
+                operand, option_string = get_operand(option_string)
+                # Prep the success counter
+                self.complications = 0
+                if operand is None:
+                    raise MissingOperandError('Compare', f'Used in {self.dice_str}')
+                option_dict['c_threshold'] = int(operand)
+                option_dict['c_compare'] = op
+                complication_threshold_found = True
+            elif (op == 'b<' or op == 'b<=' or op == 'b>' or op == 'b>=' or op == 'b=') and \
+                    not boon_threshold_found:
+                operand, option_string = get_operand(option_string)
+                # Prep the success counter
+                self.boons = 0
+                if operand is None:
+                    raise MissingOperandError('Compare', f'Used in {self.dice_str}')
+                option_dict['b_threshold'] = int(operand)
+                option_dict['b_compare'] = op
+                boon_threshold_found = True
 
         if _debug:
-            pprint(option_dict)
+            pprint(option_dict, indent=2)
 
         self._resolve_options(option_dict)
 
@@ -197,6 +295,7 @@ class DiceRoll:
             new_rolls = []
             # Explode dice
             for exp_dice in option_dict['explode']:
+                print(f'Trying to explode {exp_dice}')
                 new_rolls.extend(roll_dice(self.sides, c[exp_dice]))
 
             new_face_list = [self.map[roll] for roll in new_rolls]
@@ -216,7 +315,7 @@ class DiceRoll:
             self.rolls.extend(new_rolls)
             face_list = [self.map[roll] for roll in new_rolls]
 
-        # Now do "final" operations like keep
+        # Now do "final roll" operations like keep
         if 'keep' in option_dict:
             keep_num = option_dict['keep']
             self.rolls.sort()
@@ -226,6 +325,82 @@ class DiceRoll:
                 self.rolls = self.rolls[keep_num:]
             else:
                 self.rolls = []
+
+        # Now calculate results
+        if 'threshold' in option_dict:
+            thresh = option_dict['threshold']
+            op = option_dict['compare']
+            dub_val = option_dict['crit'] if 'double' in option_dict else None
+            for val in self.values:
+                if op == '<':
+                    mul = 2 * int(val <= dub_val) if dub_val is not None else 1
+                    self.successes += int(val < thresh) * mul
+                elif op == '>':
+                    mul = 2 * int(val >= dub_val) if dub_val is not None else 1
+                    self.successes += int(val > thresh) * mul
+                elif op == '<=':
+                    mul = 2 * int(val <= dub_val) if dub_val is not None else 1
+                    self.successes += int(val <= thresh) * mul
+                elif op == '>=':
+                    mul = 2 * int(val >= dub_val) if dub_val is not None else 1
+                    self.successes += int(val >= thresh) * mul
+                elif op == '==':
+                    mul = 2 * int(val == dub_val) if dub_val is not None else 1
+                    self.successes += int(val == thresh) * mul
+
+        # Now calculate results
+        if 'fail_threshold' in option_dict:
+            thresh = option_dict['fail_threshold']
+            op = option_dict['fail_compare']
+            dub_val = option_dict['crit_fail'] if 'crit_fail' in option_dict else None
+            for val in self.values:
+                if op == '~<':
+                    mul = 2 * int(val <= dub_val) if dub_val is not None else 1
+                    self.failures += int(val < thresh) * mul
+                elif op == '~>':
+                    mul = 2 * int(val >= dub_val) if dub_val is not None else 1
+                    self.failures += int(val > thresh) * mul
+                elif op == '~<=':
+                    mul = 2 * int(val <= dub_val) if dub_val is not None else 1
+                    self.failures += int(val <= thresh) * mul
+                elif op == '~>=':
+                    mul = 2 * int(val >= dub_val) if dub_val is not None else 1
+                    self.failures += int(val >= thresh) * mul
+                elif op == '~=':
+                    mul = 2 * int(val == dub_val) if dub_val is not None else 1
+                    self.failures += int(val == thresh) * mul
+
+        # Now calculate complications
+        if 'c_threshold' in option_dict:
+            thresh = option_dict['c_threshold']
+            op = option_dict['c_compare']
+            for val in self.values:
+                if op == 'c<':
+                    self.complications += int(val < thresh)
+                elif op == 'c>':
+                    self.complications += int(val > thresh)
+                elif op == 'c<=':
+                    self.complications += int(val <= thresh)
+                elif op == 'c>=':
+                    self.complications += int(val >= thresh)
+                elif op == 'c=':
+                    self.complications += int(val == thresh)
+
+        # Now calculate boons
+        if 'b_threshold' in option_dict:
+            thresh = option_dict['b_threshold']
+            op = option_dict['b_compare']
+            for val in self.values:
+                if op == 'b<':
+                    self.boons += int(val < thresh)
+                elif op == 'b>':
+                    self.boons += int(val > thresh)
+                elif op == 'b<=':
+                    self.boons += int(val <= thresh)
+                elif op == 'b>=':
+                    self.boons += int(val >= thresh)
+                elif op == 'b=':
+                    self.boons += int(val == thresh)
 
     def reroll(self, idx):
         self.rolls[idx] = random.randint(0, self.sides - 1)
@@ -239,6 +414,19 @@ class DiceRoll:
             'Counts': dict(Counter(face_list)),
             'Sum': self.sum,
         }
+
+        if self.successes is not None:
+            print_dict['Successes'] = self.successes
+
+        if self.failures is not None:
+            print_dict['Failures'] = self.failures
+
+        if self.complications is not None:
+            print_dict['Complications'] = self.complications
+
+        if self.boons is not None:
+            print_dict['Boons'] = self.boons
+
         return print_dict
 
     def __repr__(self):
@@ -296,6 +484,8 @@ class MissingOperandError(Exception):
 
 def get_operand(option_string: str) -> Tuple[str, str]:
     _, operand, option_string = operand_pattern.split(option_string, 1)
+    # Toss quotes
+    operand = operand.replace("'", '').replace('"', '')
     return operand, option_string
 
 
@@ -368,4 +558,5 @@ if __name__ == '__main__':
         _dice_types = json.load(dice_file)
 
     discord_token = env['TOKEN']
+    random.seed()
     client.run(discord_token)

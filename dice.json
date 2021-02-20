@@ -2,6 +2,7 @@
   "C": {
     "sides": 6,
     "map": [1, 2, 0, 0, "Effect", "Effect"],
+    "success": "low",
     "value" : {
       "Effect": 1
     }
@@ -12,6 +13,14 @@
     "value": {
       "+": 1,
       "-": -1
+    }
+  },
+  "COIN": {
+    "sides": 2,
+    "map": ["H", "T"],
+    "value": {
+      "H": 1,
+      "T": -1
     }
   }
 }
