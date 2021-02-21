@@ -8,9 +8,9 @@ from typing import Optional, Tuple, List, Dict, Union, Any
 from pprint import pformat, pprint
 from collections import defaultdict, Counter, namedtuple
 
-_debug = True
+_debug = False
 
-_sep = '-' * 40
+_sep = '-' * 80
 
 client = discord.Client()
 _dice_types: Optional[dict]
@@ -19,9 +19,9 @@ simple_numeric_pattern = re.compile(
     r'^\d+$'
 )
 
-base_roll_string = re.compile(
-    r'(?P<num_dice>\d+)[dD](?P<dice_type>\d+|[A-Z]+)(?P<options>.*)'
-)
+# base_roll_string = re.compile(
+#     r'(?P<num_dice>\d+)[dD](?P<dice_type>\d+|[A-Z]+)(?P<options>.*)'
+# )
 
 # FIXME: Not Implemented
 supported_comparisons = re.compile(
@@ -34,7 +34,7 @@ supported_operators = re.compile(
 
 _options = r'|'.join(
     [
-        r'r'  # reroll
+        r'r',  # reroll
         r'k(?!l)',  # keep
         r'kl',  # keep low
         r'cs',  # critical success
@@ -55,11 +55,13 @@ _options = r'|'.join(
         r'b<=',  # boon-lte
         r'b>=',  # boon-gte
         r'b=',  # boon-eq
-        r'c<(?!=)',  # complication-lt
-        r'c>(?!=)',  # complication-gt
-        r'c<=',  # complication-lte
-        r'c>=',  # complication-gte
-        r'c=',  # complication-eq
+        r'x<(?!=)',  # complication-lt
+        r'x>(?!=)',  # complication-gt
+        r'x<=',  # complication-lte
+        r'x>=',  # complication-gte
+        r'x=',  # complication-eq
+        r'x(?![=<>])',  # natural-complication
+        r'b(?![=<>])',  # natural
     ]
 )
 
@@ -219,6 +221,7 @@ class DiceRoll:
         # Setup dependent attributes
         self.sides = 0
         self.map = {}
+        self.face_names = {}
         self.map_values = {}
 
         self.successes = None
@@ -227,7 +230,23 @@ class DiceRoll:
         self.complications = None
         self.boons = None
 
-        self.roll_history = None
+        self.natural_success = None
+        self.natural_success_compare = None
+
+        self.natural_fail = None
+        self.natural_fail_compare = None
+
+        self.natural_complication = None
+        self.natural_c_compare = None
+
+        self.natural_boon = None
+        self.natural_b_compare = None
+
+        self.natural_cs = None
+
+        self.natural_cf = None
+
+        self._roll_history = []
 
         # Do the initial property decode num_dice, dice_type, and roll_options
         # It also applies the map and and values
@@ -244,6 +263,13 @@ class DiceRoll:
 
         # Do Options
         self._parse_options()
+
+    @property
+    def roll_history(self):
+        return self._roll_history[0] if self._roll_history else None
+
+    def push_history(self):
+        self._roll_history.append(self.rolls[:])
 
     @property
     def roll_name(self):
@@ -296,7 +322,7 @@ class DiceRoll:
                 print(f'Roll Options: {self.roll_options_str}')
 
             try:
-                dice_info = _dice_types[self.dice_type]
+                dice_info = _dice_types[self.dice_type.upper()]
             except KeyError:
                 simple_dice_match = simple_numeric_pattern.match(self.dice_type)
                 # If it can, do it, otherwise try to load the dice info
@@ -309,11 +335,27 @@ class DiceRoll:
                 else:
                     raise UnknownDiceTypeError(self.dice_type)
 
-        dice_map_end = int(dice_info['sides']) + 1
-        dice_map = dice_info['map'] if 'map' in dice_info else range(1, dice_map_end)
+        dice_map = dice_info['map'] if 'map' in dice_info else range(1, int(dice_info['sides']) + 1)
         self.map = [str(entry) for entry in dice_map]
+        self.face_names = dice_info['names'] if 'names' in dice_info else {}
         self.sides = dice_info['sides'] if 'sides' in dice_info else len(self.map)
         self.map_values = dice_info['value'] if 'value' in dice_info else {}
+
+        self.natural_success = dice_info['success'] if 'success' in dice_info else None
+        self.natural_success_compare = dice_info['success_op'] if 'success_op' in dice_info else None
+
+        self.natural_fail = dice_info['fail'] if 'fail' in dice_info else None
+        self.natural_fail_compare = '~' + dice_info['fail_op'] if 'fail_op' in dice_info else None
+
+        self.natural_complication = dice_info['complication'] if 'complication' in dice_info else None
+        self.natural_c_compare = 'x' + dice_info['complication_op'] if 'complication_op' in dice_info else None
+
+        self.natural_boon = dice_info['boon'] if 'boon' in dice_info else None
+        self.natural_b_compare = 'b' + dice_info['boon_op'] if 'boon_op' in dice_info else None
+
+        self.natural_cs = dice_info['crit_success'] if 'crit_success' in dice_info else None
+
+        self.natural_cf = dice_info['success'] if 'success' in dice_info else None
 
     def _parse_options(self):
         option_dict: Dict[str, Union[str, int, set]]
@@ -328,6 +370,30 @@ class DiceRoll:
         boon_threshold_found = False
         complication_threshold_found = False
 
+        # ------------------------------
+        #  Preset Natural Options
+        # ------------------------------
+        if self.natural_success:
+            self.successes = 0
+            option_dict['threshold'] = self.natural_success
+            option_dict['compare'] = self.natural_success_compare
+            if self.natural_cs:
+                option_dict['crit'] = self.natural_cs
+        if self.natural_fail:
+            self.failures = 0
+            option_dict['fail_threshold'] = self.natural_fail
+            option_dict['fail_compare'] = self.natural_fail_compare
+            if self.natural_cf:
+                option_dict['crit_fail'] = self.natural_cf
+        if self.natural_boon:
+            self.boons = 0
+            option_dict['b_threshold'] = self.natural_boon
+            option_dict['b_compare'] = self.natural_b_compare
+        if self.natural_complication:
+            self.complications = 0
+            option_dict['c_threshold'] = self.natural_complication
+            option_dict['c_compare'] = self.natural_c_compare
+
         if _debug:
             print(f'Parsing {option_string}')
 
@@ -337,6 +403,7 @@ class DiceRoll:
 
             if _debug:
                 print(f'Option {op}')
+
             # ------------------------------
             #  First Parse Options
             # ------------------------------
@@ -401,7 +468,7 @@ class DiceRoll:
                 if operand is None:
                     raise MissingOperandError('CriticalFailure', f'Used in {self.dice_str}')
                 option_dict['crit_fail'] = int(operand)
-            elif (op == 'c<' or op == 'c<=' or op == 'c>' or op == 'c>=' or op == 'c=') and \
+            elif (op == 'x<' or op == 'x<=' or op == 'x>' or op == 'x>=' or op == 'x=') and \
                     not complication_threshold_found:
                 operand, option_string = get_operand(option_string)
                 # Prep the success counter
@@ -421,6 +488,20 @@ class DiceRoll:
                 option_dict['b_threshold'] = int(operand)
                 option_dict['b_compare'] = op
                 boon_threshold_found = True
+            elif op == 'x' and not complication_threshold_found:
+                self.complications = 0
+                operand, option_string = get_operand(option_string)
+                if operand is None:
+                    raise MissingOperandError('Complication', f'Used in {self.dice_str}')
+                option_dict['c_threshold'] = int(operand)
+                option_dict['c_compare'] = self.natural_c_compare
+            elif op == 'b' and not boon_threshold_found:
+                self.boons = 0
+                operand, option_string = get_operand(option_string)
+                if operand is None:
+                    raise MissingOperandError('Boon', f'Used in {self.dice_str}')
+                option_dict['b_threshold'] = int(operand)
+                option_dict['b_compare'] = self.natural_c_compare
 
         if _debug:
             pprint(option_dict, indent=2)
@@ -428,9 +509,11 @@ class DiceRoll:
         self._resolve_options(option_dict)
 
     def _resolve_options(self, option_dict: dict):
+
         # Reroll any initial dice
         for idx, face in enumerate(self.faces):
             if face in option_dict['reroll']:
+                self.push_history()
                 self.reroll(idx)
                 if _debug:
                     print(f'Rerolled #{idx}: {self.rolls[idx]}')
@@ -450,6 +533,9 @@ class DiceRoll:
 
             new_face_list = [self.map[roll] for roll in new_rolls]
 
+            if new_face_list:
+                self.push_history()
+
             if _debug:
                 print(f'New Rolls: {new_rolls}')
                 print(f'New Faces: {new_face_list}')
@@ -457,6 +543,7 @@ class DiceRoll:
             # Reroll them if needed
             for idx, face in enumerate(new_face_list):
                 if face in option_dict['reroll']:
+                    self.push_history()
                     reroll_dice(new_rolls, idx, self.sides)
                     if _debug:
                         print(f'Rerolled #{idx}: {new_rolls[idx]}')
@@ -467,7 +554,7 @@ class DiceRoll:
 
         # Now do "final roll" operations like keep
         if 'keep' in option_dict:
-            self.roll_history = self.rolls[:]
+            self.push_history()
             keep_num = option_dict['keep']
             self.rolls.sort()
             if keep_num > 0:
@@ -526,15 +613,15 @@ class DiceRoll:
             thresh = option_dict['c_threshold']
             op = option_dict['c_compare']
             for val in self.values:
-                if op == 'c<':
+                if op == 'x<':
                     self.complications += int(val < thresh)
-                elif op == 'c>':
+                elif op == 'x>':
                     self.complications += int(val > thresh)
-                elif op == 'c<=':
+                elif op == 'x<=':
                     self.complications += int(val <= thresh)
-                elif op == 'c>=':
+                elif op == 'x>=':
                     self.complications += int(val >= thresh)
-                elif op == 'c=':
+                elif op == 'x=':
                     self.complications += int(val == thresh)
 
         # Now calculate boons
@@ -672,6 +759,125 @@ def roll_command(command_str: str):
 
 def format_response(results: Equation):
     embed_dict = {
+        # 'title': 'Roll Result',
+        'type': 'rich',
+        # 'timestamp': str(datetime.now()),
+    }
+
+    embed = discord.Embed.from_dict(embed_dict)
+
+    skip_sum = False
+
+    sfbc_str = ''
+    sf_flag = False
+    bc_flag = False
+    sf_net = 0
+    bc_net = 0
+
+    if successes := results.successes:
+        sf_flag = True
+        sf_net += successes.total
+
+    if failures := results.failures:
+        sf_flag = True
+        sf_net -= failures.total
+
+    if boons := results.boons:
+        bc_flag = True
+        bc_net += boons.total
+
+    if complications := results.complications:
+        bc_flag = True
+        bc_net -= complications.total
+
+    if sf_flag or bc_flag:
+        skip_sum = True
+        if sf_flag:
+            abs_result = abs(sf_net)
+            if sf_net == 0:
+                sf_type = ''
+            elif sf_net > 0:
+                sf_type = 'Success' if sf_net == 1 else 'Successes'
+            else:
+                sf_type = 'Failure' if sf_net == -1 else 'Failures'
+            if sf_type:
+                sfbc_str += f'{abs_result} {sf_type}\n'
+
+        if bc_flag:
+            abs_result = abs(bc_net)
+            if bc_net == 0:
+                bc_type = ''
+            elif bc_net > 0:
+                bc_type = 'Boon' if bc_net == 1 else 'Boons'
+            else:
+                bc_type = 'Complication' if bc_net == -1 else 'Complications'
+            if bc_type:
+                sfbc_str += f'{abs_result} {bc_type}\n'
+
+    rolls_str = '```\n'
+    msg2 = '```'
+    total_str = f'{results.sum}' if not skip_sum else ''
+    long_rolls_flag = False
+    for idx, rolls in enumerate(results.rolls):
+        sign = results.ops[idx].replace('+', '')
+        sum_str = f'  =  {sign}{rolls.sum}' if not skip_sum else ''
+        rolls_str += f'{rolls.roll_name}\n'
+        long_rolls_flag = len(rolls.rolls) > 6
+        if history := rolls.roll_history:
+            rolls_str += '\n'
+            msg2 += (
+                    '[ '
+                    + ', '.join(map(str, [rolls.map[x] for x in history]))
+                    + ' ]\n'
+            )
+        msg2 += (
+                '[ '
+                + ', '.join(map(str, rolls.faces))
+                + f' ]{sum_str}\n'
+        )
+    if len(results.rolls) > 1 and not skip_sum:
+        rolls_str += 'TOTAL\n'
+        msg2 += total_str
+    rolls_str += '```'
+    msg2 += '```'
+    # embed.add_field(name='```Dice Rolls```', value=_sep, inline=False)
+    if len(results.rolls) > 1:
+        embed.add_field(name='Dice', value=rolls_str)
+    embed.add_field(name='Rolls', value=msg2)
+
+    # COUNTER SECTION
+    msg = ''
+    if counters := results.counters:
+        rolls = results.rolls
+        msg += '```\n'
+        total_counter = Counter()
+        for idx, counter in counters:
+            rollname = f'{rolls[idx].num_dice}d{rolls[idx].dice_type}'
+            for face, count in dict(counter).items():
+                face_name = rolls[idx].face_names[face]
+                msg += f'{rollname:<8} {face_name:<10} {count}\n'
+                rollname = ''
+                total_counter.update([face_name for x in range(count)])
+
+        rollname = 'TOTAL'
+        if len(results.rolls) > 1:
+            for face, count in dict(total_counter).items():
+                msg += f'{rollname:<8} {face:<10} {count}\n'
+                rollname = ''
+
+        msg += '```'
+        print(msg)
+        embed.add_field(name='Roll Stats', value=msg, inline=False)
+
+    if sfbc_str:
+        sfbc_str = '```\n' + sfbc_str + '```'
+        embed.add_field(name='Results', value=sfbc_str, inline=False)
+
+    return embed
+
+
+def format_response_full(results: Equation):
+    embed_dict = {
         'title': 'Roll Result',
         'type': 'rich',
         'timestamp': str(datetime.now()),
@@ -682,49 +888,60 @@ def format_response(results: Equation):
     skip_sum = False
 
     # ROLLS SECTION
-    rolls_str = ''
-    msg2 = ''
+    rolls_str = '```\n'
+    msg2 = '```\n'
     for rolls in results.rolls:
         rolls_str += f'{rolls.roll_name}\n'
         if history := rolls.roll_history:
             rolls_str += '\n'
             msg2 += (
                     '[ '
-                    + ' , '.join(map(str, [rolls.map[x] for x in history]))
+                    + ', '.join(map(str, [rolls.map[x] for x in history]))
                     + ' ]\n'
             )
         msg2 += (
                 '[ '
-                + ' , '.join(map(str, rolls.faces))
+                + ', '.join(map(str, rolls.faces))
                 + ' ]\n'
         )
 
-    embed.add_field(name='```Dice Rolls```', value=_sep, inline=False)
-    embed.add_field(name='Dice', value=rolls_str)
+    rolls_str += '```\n'
+    msg2 += '```\n'
+
+    embed.add_field(name='Dice Rolls', value=_sep, inline=False)
+    if len(results.rolls) > 1:
+        embed.add_field(name='Dice', value=rolls_str)
     embed.add_field(name='Rolls', value=msg2)
 
     # COUNTER SECTION
     msg = ''
-    msg2 = ''
-    msg3 = ''
-
     if counters := results.counters:
+        embed.add_field(name='Roll Stats', value=_sep, inline=False)
         rolls = results.rolls
-        embed.add_field(name='```Roll Stats```', value=_sep, inline=False)
+        msg += '```\n'
+        total_counter = Counter()
         for idx, counter in counters:
-            msg += f'{rolls[idx].num_dice}d{rolls[idx].dice_type}'
+            rollname = f'{rolls[idx].num_dice}d{rolls[idx].dice_type}'
             for face, count in dict(counter).items():
-                msg += '\n'
-                msg2 += f'{face}\n'
-                msg3 += f'{count}\n'
-        embed.add_field(name='Roll', value=msg, inline=True)
-        embed.add_field(name='Face', value=msg2, inline=True)
-        embed.add_field(name='Count', value=msg3, inline=True)
+                face_name = rolls[idx].face_names[face]
+                msg += f'{rollname:<8} {face_name:<10} {count}\n'
+                rollname = ''
+                total_counter.update([face_name for x in range(count)])
+
+        rollname = 'Total'
+        if len(results.rolls) > 1:
+            for face, count in dict(total_counter).items():
+                msg += f'\n{rollname:<8} {face:<10} {count}\n'
+                rollname = ''
+
+        msg += '```'
+        print(msg)
+        embed.add_field(name='Roll Stats', value=msg, inline=False)
 
     # SUCCESS SECTION
-    msg1 = ''
-    msg2 = ''
-    msg3 = ''
+    msg1 = '```\n'
+    msg2 = '```\n'
+    msg3 = '```\n'
     net = 0
     sf_section_flag = False
 
@@ -741,9 +958,10 @@ def format_response(results: Equation):
             msg2 += '\n'
             msg3 += '0\n'
 
-        msg1 += '*Subtotal*\n\n'
-        msg2 += '\n\n'
-        msg3 += f'{successes.total}\n\n'
+        if len(results.rolls) > 1:
+            msg1 += '\n\n'
+            msg2 += 'Subtotal\n\n'
+            msg3 += f'{successes.total}\n\n'
 
     if failures := results.failures:
         net -= failures.total
@@ -758,9 +976,10 @@ def format_response(results: Equation):
             msg2 += '\n'
             msg3 += '0\n'
 
-        msg1 += '*Subtotal*\n\n'
-        msg2 += '\n\n'
-        msg3 += f'{failures.total}\n\n'
+        if len(results.rolls) > 1:
+            msg1 += '\n\n'
+            msg2 += 'Subtotal\n\n'
+            msg3 += f'{failures.total}\n\n'
 
     if sf_section_flag:
         abs_result = abs(net)
@@ -772,14 +991,18 @@ def format_response(results: Equation):
         else:
             sf_type = 'Failure' if net == -1 else 'Failures'
 
-        msg1 += '**TOTAL**'
+        msg1 += 'TOTAL'
         msg2 += ''
-        msg3 += f'**{abs_result} {sf_type}**'
+        msg3 += f'{abs_result} {sf_type}'
+
+        msg1 += '```'
+        msg2 += '```'
+        msg3 += '```'
 
         skip_sum = True
 
         embed.add_field(
-            name='```Successes and Failures```',
+            name='Successes and Failures',
             value=_sep,
             inline=False,
         )
@@ -789,9 +1012,9 @@ def format_response(results: Equation):
         embed.add_field(name='Value', value=msg3, inline=True)
 
     # BOON SECTION
-    msg1 = ''
-    msg2 = ''
-    msg3 = ''
+    msg1 = '```\n'
+    msg2 = '```\n'
+    msg3 = '```\n'
     net = 0
     bc_section_flag = False
 
@@ -808,9 +1031,10 @@ def format_response(results: Equation):
             msg2 += '\n'
             msg3 += '0\n'
 
-        msg1 += '*Subtotal*\n\n'
-        msg2 += '\n\n'
-        msg3 += f'{boons.total}\n\n'
+        if len(results.rolls) > 1:
+            msg1 += '\n\n'
+            msg2 += 'Subtotal\n\n'
+            msg3 += f'{boons.total}\n\n'
 
     if complications := results.complications:
         net -= complications.total
@@ -825,9 +1049,10 @@ def format_response(results: Equation):
             msg2 += '\n'
             msg3 += '0\n'
 
-        msg1 += '*Subtotal*\n\n'
-        msg2 += '\n\n'
-        msg3 += f'{complications.total}\n\n'
+        if len(results.rolls) > 1:
+            msg1 += '\n\n'
+            msg2 += 'Subtotal\n\n'
+            msg3 += f'{complications.total}\n\n'
 
     if bc_section_flag:
         abs_result = abs(net)
@@ -839,14 +1064,18 @@ def format_response(results: Equation):
         else:
             bc_type = 'Complication' if net == -1 else 'Complications'
 
-        msg1 += '**TOTAL**'
+        msg1 += 'TOTAL'
         msg2 += ''
-        msg3 += f'**{abs_result} {bc_type}**'
+        msg3 += f'{abs_result} {bc_type}'
+
+        msg1 += '```\n'
+        msg2 += '```\n'
+        msg3 += '```\n'
 
         skip_sum = True
 
         embed.add_field(
-            name='```Boons and Complications```',
+            name='Boons and Complications',
             value=_sep,
             inline=False,
         )
@@ -857,20 +1086,143 @@ def format_response(results: Equation):
 
     # SUM SECTION
     if not skip_sum:
-        rolls_str_2 = ''
-        msg2 = ''
-        for idx, rolls in enumerate(results.rolls):
-            rolls_str_2 += f'{rolls.roll_name}\n'
-            msg2 += f'{results.ops[idx]}{rolls.sum}\n'
+        rolls_str_2 = '```\n'
+        msg2 = '```\n'
+        if len(results.rolls) > 1:
+            for idx, rolls in enumerate(results.rolls):
+                rolls_str_2 += f'{rolls.roll_name}\n'
+                sign = results.ops[idx].replace('+', '')
+                msg2 += f'{sign}{rolls.sum}\n'
 
-        rolls_str_2 += "\n**Total**"
-        msg2 += f'\n**{results.sum}**'
+        rolls_str_2 += "\nTotal\n```"
+        msg2 += f'\n{results.sum}\n```'
 
-        embed.add_field(name='```Sum```', value=_sep, inline=False)
+        embed.add_field(name='Sum', value=_sep, inline=False)
         embed.add_field(name='Dice', value=rolls_str_2)
         embed.add_field(name='Rolls', value=msg2)
 
     # pprint(embed.fields, indent=2)
+
+    return embed
+
+
+def create_help():
+    cmd = (
+        '''```
+r       Simple Roll
+rf      Verbose (Full) Roll
+h       Help
+
+Roll Syntax:
+    #dDICE      Roll # of DICE (case insensitive)
+    
+            2d20    : 2x 20 sided dice
+            10dCOIN : 10x coins (H or T)
+            4d6     : 4x  6 sided dice
+            2dST    : 2x Star Trek Adventure Dice
+            1dDD    : 1x D&D Dice
+            
+    1d20[options]   Apply roll options to a single d20.
+                    There must not be any spaces between options
+                
+    4d6 + 2d4   Roll multiple dice and sum the results
+    1d20 + 2    Add a constant 2 to the result of a d20
+    1d20 - 4    Subtract a constant 4 from a d20
+    
+    Math and dice roll options can be combined:
+    
+        2d20kl1 + 2 : Roll 2d20, keep the lowest, add 2
+        4dC + 4dC   : Roll 4 Challenge dice twice, show their
+                      results separately
+```'''
+    )
+
+    extra_rolls = (
+        '''```
+r#      Reroll #. Can be specified multiple times
+            r1r2 : reroll 1's and 2's
+            r"H" : reroll die face called H (must be quoted)
+!#      Explode dice that roll #
+            !10  : Explode 10's
+            !"E" : Explode dice that roll the face called E 
+                   (must be quoted)
+k#      Keep # highest dice
+            k1   : keep highest dice (D&D Advantage)
+            k2   : keep 2 highest dice
+kl#     Keep # lowest dice
+            kl1  : keep lowest dice (D&D Disadvantage)
+            kl4  : keep 4 lowest dice
+```'''
+    )
+
+    success = (
+        '''```
+[cmp]#  Success comparison
+            <#  : lt
+            <=# : lte
+            >#  : gt
+            >=# : gte
+            ==# : eq
+            
+~[cmp]# Failure comparison
+            ~<#  : lt
+            ~<=# : lte
+            ~>#  : gt
+            ~>=# : gte
+            ~==# : eq
+
+cs#     Count a critical success (2x) when the dice rolls:
+            > | >= : at least #
+            < | <= ; at most #
+            (A success criteria must be specified)
+            
+cf#     Count a critical failure (2x) when the dice rolls:
+            ~> | ~>= : at least #
+            ~< | ~<= ; at most #
+            (A failure criteria must be specified)
+```'''
+    )
+
+    boon = (
+        '''```
+b[cmp]# Boon comparisons start with 'b'
+            b<#  : lt
+            b<=# : lte
+            b>#  : gt
+            b>=# : gte
+            b=#  : eq
+            
+c[cmp]# Complication comparisons start with 'b'
+            c<#  : lt
+            c<=# : lte
+            c>#  : gt
+            c>=# :gte
+            c=#  : eq
+
+x#      For dice with natural complications
+            2dSTx18 : STA Dice (2d20), 
+                complication on 18 instead of 20
+            2dDDx2  : D&D Dice (d20), 
+                "crit fail" on 2 instead of 1
+
+b#      For dice with natural boons
+            2dDDb18  : D&D Dice (d20), 
+                "critical" on 18 instead of 20
+```'''
+    )
+
+    embed_dict = {
+        'title': 'Help',
+        'type': 'rich',
+        'description': cmd,
+        'timestamp': str(datetime.now()),
+    }
+
+    embed = discord.Embed.from_dict(embed_dict)
+
+    embed.add_field(name='Roll Modifiers', value=extra_rolls, inline=False)
+    embed.add_field(name='Success and Failure', value=success, inline=False)
+    embed.add_field(name='Boons and Complications', value=boon, inline=False)
 
     return embed
 
@@ -889,12 +1241,30 @@ async def on_message(message):
     if message.author == client.user:
         return
 
-    if message.content.startswith('/hello'):
-        await message.channel.send('Hello!')
+    if message.content.startswith('/h'):
+        embed_msg = create_help()
+        await message.channel.send(None, embed=embed_msg)
 
     elif message.content.startswith('/r '):
         results = roll_command(message.content[2:])
         response = format_response(results)
+        response.title = f'{message.author.display_name} : {message.content[2:]}'
+        # response.set_thumbnail(url=message.author.avatar_url)
+        response.set_author(
+            name=message.author.display_name,
+            icon_url=message.author.avatar_url,
+        )
+        await message.channel.send(None, embed=response)
+
+    elif message.content.startswith('/rf '):
+        results = roll_command(message.content[3:])
+        response = format_response_full(results)
+        response.title = f'{message.author.display_name} : {message.content[3:]}'
+        # response.set_thumbnail(url=message.author.avatar_url)
+        response.set_author(
+            name=message.author.display_name,
+            icon_url=message.author.avatar_url,
+        )
         await message.channel.send(None, embed=response)
 
 
@@ -904,6 +1274,22 @@ if __name__ == '__main__':
 
     with open('dice.json', 'r') as dice_file:
         _dice_types = json.load(dice_file)
+
+    supported_dice = (
+        r'|'.join(map(str, sorted(_dice_types, key=len, reverse=True)))
+    )
+
+    supported_lc_dice = (
+        r'|'.join(map(lambda x: x.lower(), sorted(_dice_types, key=len, reverse=True)))
+    )
+
+    base_roll_string = re.compile(
+        r'(?P<num_dice>\d+)[dD](?P<dice_type>\d+|'
+        + supported_dice
+        + r'|'
+        + supported_lc_dice
+        + r')(?P<options>.*)'
+    )
 
     discord_token = env['TOKEN']
     random.seed()

@@ -1,11 +1,26 @@
 {
+  "ST" : {
+    "sides": 20,
+    "crit_success": 1,
+    "complication": 20,
+    "complication_op": ">="
+  },
   "C": {
     "sides": 6,
-    "map": [1, 2, 0, 0, "Effect", "Effect"],
-    "success": "low",
+    "map": [1, 2, 0, 0, "E", "E"],
+    "names": {
+      "E": "Effect"
+    },
     "value" : {
-      "Effect": 1
+      "E": 1
     }
+  },
+  "DD": {
+    "sides": 20,
+    "boon": 20,
+    "boon_op": ">=",
+    "complication": 1,
+    "complication_op": "<="
   },
   "F": {
     "sides": 6,
@@ -18,6 +33,10 @@
   "COIN": {
     "sides": 2,
     "map": ["H", "T"],
+    "names": {
+      "H": "Heads",
+      "T": "Tails"
+    },
     "value": {
       "H": 1,
       "T": -1
