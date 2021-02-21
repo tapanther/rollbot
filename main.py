@@ -455,22 +455,22 @@ class DiceRoll:
         if 'threshold' in option_dict:
             thresh = option_dict['threshold']
             op = option_dict['compare']
-            dub_val = option_dict['crit'] if 'double' in option_dict else None
+            dub_val = option_dict['crit'] if 'crit' in option_dict else None
             for val in self.values:
                 if op == '<':
-                    mul = 2 * int(val <= dub_val) if dub_val is not None else 1
+                    mul = 1 + int(val <= dub_val) if dub_val is not None else 1
                     self.successes += int(val < thresh) * mul
                 elif op == '>':
-                    mul = 2 * int(val >= dub_val) if dub_val is not None else 1
+                    mul = 1 + int(val >= dub_val) if dub_val is not None else 1
                     self.successes += int(val > thresh) * mul
                 elif op == '<=':
-                    mul = 2 * int(val <= dub_val) if dub_val is not None else 1
+                    mul = 1 + int(val <= dub_val) if dub_val is not None else 1
                     self.successes += int(val <= thresh) * mul
                 elif op == '>=':
-                    mul = 2 * int(val >= dub_val) if dub_val is not None else 1
+                    mul = 1 + int(val >= dub_val) if dub_val is not None else 1
                     self.successes += int(val >= thresh) * mul
                 elif op == '==':
-                    mul = 2 * int(val == dub_val) if dub_val is not None else 1
+                    mul = 1 + int(val == dub_val) if dub_val is not None else 1
                     self.successes += int(val == thresh) * mul
 
         # Now calculate results
@@ -480,19 +480,19 @@ class DiceRoll:
             dub_val = option_dict['crit_fail'] if 'crit_fail' in option_dict else None
             for val in self.values:
                 if op == '~<':
-                    mul = 2 * int(val <= dub_val) if dub_val is not None else 1
+                    mul = 1 + int(val <= dub_val) if dub_val is not None else 1
                     self.failures += int(val < thresh) * mul
                 elif op == '~>':
-                    mul = 2 * int(val >= dub_val) if dub_val is not None else 1
+                    mul = 1 + int(val >= dub_val) if dub_val is not None else 1
                     self.failures += int(val > thresh) * mul
                 elif op == '~<=':
-                    mul = 2 * int(val <= dub_val) if dub_val is not None else 1
+                    mul = 1 + int(val <= dub_val) if dub_val is not None else 1
                     self.failures += int(val <= thresh) * mul
                 elif op == '~>=':
-                    mul = 2 * int(val >= dub_val) if dub_val is not None else 1
+                    mul = 1 + int(val >= dub_val) if dub_val is not None else 1
                     self.failures += int(val >= thresh) * mul
                 elif op == '~=':
-                    mul = 2 * int(val == dub_val) if dub_val is not None else 1
+                    mul = 1 + int(val == dub_val) if dub_val is not None else 1
                     self.failures += int(val == thresh) * mul
 
         # Now calculate complications
@@ -804,10 +804,10 @@ async def on_message(message):
     if message.author == client.user:
         return
 
-    if message.content.startswith('-hello'):
+    if message.content.startswith('/hello'):
         await message.channel.send('Hello!')
 
-    elif message.content.startswith('-r '):
+    elif message.content.startswith('/r '):
         results = roll_command(message.content[2:])
         response = format_response(results)
         await message.channel.send(None, embed=response)
