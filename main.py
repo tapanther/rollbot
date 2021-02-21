@@ -4,13 +4,13 @@ import random
 import re
 
 from datetime import datetime
-from typing import Optional, Tuple, List, Dict, Union
+from typing import Optional, Tuple, List, Dict, Union, Any
 from pprint import pformat, pprint
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, namedtuple
 
 _debug = True
 
-_sep = '-'*40
+_sep = '-' * 40
 
 client = discord.Client()
 _dice_types: Optional[dict]
@@ -34,32 +34,32 @@ supported_operators = re.compile(
 
 _options = r'|'.join(
     [
-        r'r'                # reroll
-        r'k(?!l)',          # keep
-        r'kl',              # keep low
-        r'cs',              # critical success
-        r'cf',              # critical failure
-        r'!',               # explode
-        r'(?<!~)<(?!=)',    # success-lt
-        r'(?<!~)>(?!=)',    # success-gt
-        r'(?<!~)<=',        # success-lte
-        r'(?<!~)>=',        # success-gte
-        r'(?<!~)==',        # success-eq
-        r'~<(?!=)',         # failure-lt
-        r'~>(?!=)',         # failure-gt
-        r'~<=',             # failure-lte
-        r'~>=',             # failure-gte
-        r'~=',              # failure-eq
-        r'b<(?!=)',         # boon-lt
-        r'b>(?!=)',         # boon-gt
-        r'b<=',             # boon-lte
-        r'b>=',             # boon-gte
-        r'b=',              # boon-eq
-        r'c<(?!=)',         # complication-lt
-        r'c>(?!=)',         # complication-gt
-        r'c<=',             # complication-lte
-        r'c>=',             # complication-gte
-        r'c=',              # complication-eq
+        r'r'  # reroll
+        r'k(?!l)',  # keep
+        r'kl',  # keep low
+        r'cs',  # critical success
+        r'cf',  # critical failure
+        r'!',  # explode
+        r'(?<!~)<(?!=)',  # success-lt
+        r'(?<!~)>(?!=)',  # success-gt
+        r'(?<!~)<=',  # success-lte
+        r'(?<!~)>=',  # success-gte
+        r'(?<!~)==',  # success-eq
+        r'~<(?!=)',  # failure-lt
+        r'~>(?!=)',  # failure-gt
+        r'~<=',  # failure-lte
+        r'~>=',  # failure-gte
+        r'~=',  # failure-eq
+        r'b<(?!=)',  # boon-lt
+        r'b>(?!=)',  # boon-gt
+        r'b<=',  # boon-lte
+        r'b>=',  # boon-gte
+        r'b=',  # boon-eq
+        r'c<(?!=)',  # complication-lt
+        r'c>(?!=)',  # complication-gt
+        r'c<=',  # complication-lte
+        r'c>=',  # complication-gte
+        r'c=',  # complication-eq
     ]
 )
 
@@ -76,6 +76,8 @@ operand_pattern = re.compile(
 # -------------------------------------------------------------
 #  Dice Roll Class
 # -------------------------------------------------------------
+
+RollResult = namedtuple('RollResult', ['total', 'map'])
 
 
 class Equation:
@@ -108,11 +110,9 @@ class Equation:
     @property
     def successes(self):
         total_successes = 0
-        total_failures = 0
         success_list = []
-        failure_list = []
-        net = 0
         valid = False
+
         for idx, roll in enumerate(self.rolls):
             try:
                 total_successes += roll.successes
@@ -121,6 +121,20 @@ class Equation:
             except TypeError:
                 pass
 
+        result = RollResult(
+            total=total_successes,
+            map=success_list,
+        )
+
+        return result if valid else None
+
+    @property
+    def failures(self):
+        total_failures = 0
+        failure_list = []
+        valid = False
+
+        for idx, roll in enumerate(self.rolls):
             try:
                 total_failures += roll.failures
                 failure_list.append((idx, roll.failures))
@@ -128,46 +142,54 @@ class Equation:
             except TypeError:
                 pass
 
-        net = total_successes - total_failures
+        result = RollResult(
+            total=total_failures,
+            map=failure_list,
+        )
 
-        result_dict = {
-            'Success List': success_list,
-            'Failure List': failure_list,
-            'Successes': total_successes,
-            'Failures': total_failures,
-            'Net Successes': net,
-        }
-
-        return result_dict if valid else None
+        return result if valid else None
 
     @property
     def boons(self):
         total_boons = 0
-        total_complications = 0
-        net = 0
+        boon_list = []
         valid = False
-        for roll in self.rolls:
+
+        for idx, roll in enumerate(self.rolls):
             try:
                 total_boons += roll.boons
+                boon_list.append((idx, roll.boons))
                 valid |= True
             except TypeError:
                 pass
 
+        result = RollResult(
+            total=total_boons,
+            map=boon_list,
+        )
+
+        return result if valid else None
+
+    @property
+    def complications(self):
+        total_complications = 0
+        complication_list = []
+        valid = False
+
+        for idx, roll in enumerate(self.rolls):
             try:
                 total_complications += roll.complications
+                complication_list.append((idx, roll.complications))
                 valid |= True
             except TypeError:
                 pass
 
-        net = total_boons - total_complications
+        result = RollResult(
+            total=total_complications,
+            map=complication_list,
+        )
 
-        result_dict = {
-            'Boons': total_boons,
-            'Complications': total_complications,
-            'Net Boons': net,
-        }
-
-        return result_dict if valid else None
+        return result if valid else None
 
     def get_print_dict(self):
         print_dict = {
@@ -254,6 +276,7 @@ class DiceRoll:
         return Counter(interesting_list) if interesting_list else None
 
     def _decode_dice_string(self):
+        dice_info: Dict[str, Any]
         if self.dice_str == '':
             # If doing nothing, result will be zero anyways
             dice_info = {
@@ -286,7 +309,8 @@ class DiceRoll:
                 else:
                     raise UnknownDiceTypeError(self.dice_type)
 
-        dice_map = dice_info['map'] if 'map' in dice_info else range(1, (dice_info['sides'] + 1))
+        dice_map_end = int(dice_info['sides']) + 1
+        dice_map = dice_info['map'] if 'map' in dice_info else range(1, dice_map_end)
         self.map = [str(entry) for entry in dice_map]
         self.sides = dice_info['sides'] if 'sides' in dice_info else len(self.map)
         self.map_values = dice_info['value'] if 'value' in dice_info else {}
@@ -351,7 +375,9 @@ class DiceRoll:
                 option_dict['threshold'] = int(operand)
                 option_dict['compare'] = op
                 threshold_option_found = True
-            elif (op == '~<' or op == '~<=' or op == '~>' or op == '~>=' or op == '~=') and not fail_threshold_option_found:
+            elif (
+                    op == '~<' or op == '~<=' or op == '~>' or op == '~>=' or op == '~=') \
+                    and not fail_threshold_option_found:
                 operand, option_string = get_operand(option_string)
                 # Prep the success counter
                 self.failures = 0
@@ -363,7 +389,7 @@ class DiceRoll:
             elif op == 'cs':
                 operand, option_string = get_operand(option_string)
                 if operand is None:
-                    operand = self.map[self.sides-1]
+                    operand = self.map[self.sides - 1]
                 option_dict['crit'] = int(operand)
                 # FIXME - Does it make _any_ sense to count doubles without a threshold?
                 # if 'compare' not in option_dict:
@@ -663,14 +689,14 @@ def format_response(results: Equation):
         if history := rolls.roll_history:
             rolls_str += '\n'
             msg2 += (
-                '[ '
-                + ' , '.join(map(str, [rolls.map[x] for x in history]))
-                + ' ]\n'
+                    '[ '
+                    + ' , '.join(map(str, [rolls.map[x] for x in history]))
+                    + ' ]\n'
             )
         msg2 += (
-            '[ '
-            + ' , '.join(map(str, rolls.faces))
-            + ' ]\n'
+                '[ '
+                + ' , '.join(map(str, rolls.faces))
+                + ' ]\n'
         )
 
     embed.add_field(name='```Dice Rolls```', value=_sep, inline=False)
@@ -681,6 +707,7 @@ def format_response(results: Equation):
     msg = ''
     msg2 = ''
     msg3 = ''
+
     if counters := results.counters:
         rolls = results.rolls
         embed.add_field(name='```Roll Stats```', value=_sep, inline=False)
@@ -695,81 +722,138 @@ def format_response(results: Equation):
         embed.add_field(name='Count', value=msg3, inline=True)
 
     # SUCCESS SECTION
+    msg1 = ''
+    msg2 = ''
+    msg3 = ''
+    net = 0
+    sf_section_flag = False
+
     if successes := results.successes:
+        sf_section_flag = True
+        net += successes.total
+        msg1 += 'Successes'
+        for idx, val in successes.map:
+            msg1 += '\n'
+            msg2 += f'{results.rolls[idx].roll_name}\n'
+            msg3 += f'{val}\n'
+        if not successes.map:
+            msg1 += '\n'
+            msg2 += '\n'
+            msg3 += '0\n'
+
+        msg1 += '*Subtotal*\n\n'
+        msg2 += '\n\n'
+        msg3 += f'{successes.total}\n\n'
+
+    if failures := results.failures:
+        net -= failures.total
+        sf_section_flag = True
+        msg1 += 'Failures'
+        for idx, val in failures.map:
+            msg1 += '\n'
+            msg2 += f'{results.rolls[idx].roll_name}\n'
+            msg3 += f'{val}\n'
+        if not failures.map:
+            msg1 += '\n'
+            msg2 += '\n'
+            msg3 += '0\n'
+
+        msg1 += '*Subtotal*\n\n'
+        msg2 += '\n\n'
+        msg3 += f'{failures.total}\n\n'
+
+    if sf_section_flag:
+        abs_result = abs(net)
+
+        if net == 0:
+            sf_type = ''
+        elif net > 0:
+            sf_type = 'Success' if net == 1 else 'Successes'
+        else:
+            sf_type = 'Failure' if net == -1 else 'Failures'
+
+        msg1 += '**TOTAL**'
+        msg2 += ''
+        msg3 += f'**{abs_result} {sf_type}**'
+
         skip_sum = True
-        msg1 = ''
-        msg2 = ''
-        msg3 = ''
+
         embed.add_field(
             name='```Successes and Failures```',
             value=_sep,
             inline=False,
         )
 
-        msg1 += 'Successes'
-        for idx, val in successes['Success List']:
-            msg1 += '\n'
-            msg2 += f'{results.rolls[idx].roll_name}\n'
-            msg3 += f'{val}\n'
-        if not successes['Success List']:
-            msg1 += '\n'
-            msg2 += '\n'
-            msg3 += '0\n'
-
-        msg1 += '*Subtotal*\n\n'
-        msg2 += '\n\n'
-        msg3 += f'{successes["Successes"]}\n\n'
-
-        msg1 += 'Failures'
-        for idx, val in successes['Failure List']:
-            msg1 += '\n'
-            msg2 += f'{results.rolls[idx].roll_name}\n'
-            msg3 += f'{val}\n'
-        if not successes['Failure List']:
-            msg1 += '\n'
-            msg2 += '\n'
-            msg3 += '0\n'
-
-        msg1 += '*Subtotal*\n\n'
-        msg2 += '\n\n'
-        msg3 += f'{successes["Failures"]}\n\n'
-
-        net = successes["Net Successes"]
-        abs_result = abs(net)
-
-        msg1 += '**TOTAL**'
-        msg2 += ''
-        msg3 += f'**{abs_result} {"Successes" if net >= 0 else "Failures"}**'
-
-        # pprint([msg1, msg2, msg3], indent=2)
-
         embed.add_field(name='Type', value=msg1, inline=True)
         embed.add_field(name='Roll', value=msg2, inline=True)
         embed.add_field(name='Value', value=msg3, inline=True)
 
     # BOON SECTION
+    msg1 = ''
+    msg2 = ''
+    msg3 = ''
+    net = 0
+    bc_section_flag = False
+
     if boons := results.boons:
+        bc_section_flag = True
+        net += boons.total
+        msg1 += 'Boons'
+        for idx, val in boons.map:
+            msg1 += '\n'
+            msg2 += f'{results.rolls[idx].roll_name}\n'
+            msg3 += f'{val}\n'
+        if not boons.map:
+            msg1 += '\n'
+            msg2 += '\n'
+            msg3 += '0\n'
+
+        msg1 += '*Subtotal*\n\n'
+        msg2 += '\n\n'
+        msg3 += f'{boons.total}\n\n'
+
+    if complications := results.complications:
+        net -= complications.total
+        bc_section_flag = True
+        msg1 += 'Complications'
+        for idx, val in complications.map:
+            msg1 += '\n'
+            msg2 += f'{results.rolls[idx].roll_name}\n'
+            msg3 += f'{val}\n'
+        if not complications.map:
+            msg1 += '\n'
+            msg2 += '\n'
+            msg3 += '0\n'
+
+        msg1 += '*Subtotal*\n\n'
+        msg2 += '\n\n'
+        msg3 += f'{complications.total}\n\n'
+
+    if bc_section_flag:
+        abs_result = abs(net)
+
+        if net == 0:
+            bc_type = ''
+        elif net > 0:
+            bc_type = 'Boon' if net == 1 else 'Boons'
+        else:
+            bc_type = 'Complication' if net == -1 else 'Complications'
+
+        msg1 += '**TOTAL**'
+        msg2 += ''
+        msg3 += f'**{abs_result} {bc_type}**'
+
         skip_sum = True
+
         embed.add_field(
             name='```Boons and Complications```',
             value=_sep,
             inline=False,
         )
-        net = boons["Net Boons"]
-        abs_result = abs(net)
-        msg = '\n'.join([
-            '*Boons*',
-            '*Complications*',
-            '\n**Result**'
-        ])
 
-        msg2 = '\n'.join([
-            f'{boons["Boons"]}',
-            f'{boons["Complications"]}',
-            f'\n**{abs_result} {"Boons" if net >= 0 else "Complications"}**'
-        ])
-        embed.add_field(name='Key', value=msg, inline=True)
-        embed.add_field(name='Value', value=msg2, inline=True)
+        embed.add_field(name='Type', value=msg1, inline=True)
+        embed.add_field(name='Roll', value=msg2, inline=True)
+        embed.add_field(name='Value', value=msg3, inline=True)
 
     # SUM SECTION
     if not skip_sum:
@@ -789,6 +873,7 @@ def format_response(results: Equation):
     # pprint(embed.fields, indent=2)
 
     return embed
+
 
 # -------------------------------------------------------------
 #  Actual Discord Bot
