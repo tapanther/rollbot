@@ -20,6 +20,10 @@ _sep = '-' * 80
 client = discord.Client()
 _dice_types: Optional[dict]
 
+comment_pattern = re.compile(
+    r'#(?P<comment>.*$)'
+)
+
 simple_numeric_pattern = re.compile(
     r'^\d+$'
 )
@@ -1384,9 +1388,15 @@ async def on_message(message):
         await message.channel.send(None, embed=embed_msg)
 
     elif message.content.startswith('/r '):
-        results = roll_command(message.content[2:])
+        user_cmd = message.content[2:]
+        if comment := comment_pattern.search(user_cmd):
+            comment = '```\n#' + comment.group('comment') + '\n```'
+        user_cmd = comment_pattern.sub('', user_cmd, count=1)
+        results = roll_command(user_cmd)
         response = format_response(results)
-        response.title = f'{message.author.display_name} : {message.content[2:]}'
+        response.title = f'{message.author.display_name} : {user_cmd}'
+        if comment:
+            response.description = comment
         # response.set_thumbnail(url=message.author.avatar_url)
         response.set_author(
             name=message.author.display_name,
@@ -1395,9 +1405,15 @@ async def on_message(message):
         await message.channel.send(None, embed=response)
 
     elif message.content.startswith('/rf '):
-        results = roll_command(message.content[3:])
+        user_cmd = message.content[3:]
+        if comment := comment_pattern.search(user_cmd):
+            comment = '```\n#' + comment.group('comment') + '\n```'
+        user_cmd = comment_pattern.sub('', user_cmd, count=1)
+        results = roll_command(user_cmd)
         response = format_response_full(results)
-        response.title = f'{message.author.display_name} : {message.content[3:]}'
+        response.title = f'{message.author.display_name} : {user_cmd}'
+        if comment:
+            response.description = comment
         # response.set_thumbnail(url=message.author.avatar_url)
         response.set_author(
             name=message.author.display_name,
