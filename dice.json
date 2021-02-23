@@ -1,4 +1,101 @@
 {
+  "GB": {
+    "map": ["B", "B", "S", "SA", "AA", "A"],
+    "names": {
+      "B": "Blank",
+      "S": "Success",
+      "A": "Advantage",
+      "AA": "Advantage x2",
+      "SA": "Success|Advantage"
+    },
+    "success": ["S", "SA"],
+    "success_op": "=",
+    "boon": ["A", "AA", "SA"],
+    "boon_op": "=",
+    "crit_boon": ["AA"]
+  },
+  "GS": {
+    "map": ["B", "B", "F", "F", "T", "T"],
+    "names": {
+      "B": "Blank",
+      "F": "Failure",
+      "T": "Threat"
+    },
+    "fail": ["F"],
+    "fail_op": "=",
+    "complication": ["T"],
+    "complication_op": "="
+  },
+  "GA": {
+    "map": ["B", "S", "S", "SS", "A", "A", "SA", "AA"],
+    "names": {
+      "B": "Blank",
+      "S": "Success",
+      "SS": "Success x2",
+      "A": "Advantage",
+      "AA": "Advantage x2",
+      "SA": "Success|Advantage"
+    },
+    "success": ["S", "SS", "SA"],
+    "success_op": "=",
+    "crit_success": ["SS"],
+    "boon": ["A", "AA", "SA"],
+    "boon_op": "=",
+    "crit_boon": ["AA"]
+  },
+  "GD": {
+    "map": ["B", "F", "FF", "T", "T", "T", "TT", "FT"],
+    "names": {
+      "B": "Blank",
+      "F": "Failure",
+      "FF": "Failure x2",
+      "T": "Threat",
+      "TT": "Threat x2",
+      "FT": "Failure|Threat"
+    },
+    "fail": ["F", "FF", "FT"],
+    "fail_op": "=",
+    "crit_fail": ["FF"],
+    "complication": ["T", "TT", "FT"],
+    "complication_op": "=",
+    "crit_complication": ["TT"]
+  },
+  "GP": {
+    "map": ["B", "S", "S", "SS", "SS", "A", "A", "SA", "SA", "AA", "AA", "Tr"],
+    "names": {
+      "B": "Blank",
+      "S": "Success",
+      "SS": "Success x2",
+      "A": "Advantage",
+      "AA": "Advantage x2",
+      "SA": "Success|Advantage",
+      "Tr": "Triumph"
+    },
+    "success": ["S", "SS", "SA", "Tr"],
+    "success_op": "=",
+    "crit_success": ["SS"],
+    "boon": ["A", "AA", "SA"],
+    "boon_op": "=",
+    "crit_boon": ["AA"]
+  },
+  "GC": {
+    "map": ["B", "F", "F", "FF", "FF", "T", "T", "FT", "FT", "TT", "TT", "D"],
+    "names": {
+      "B": "Blank",
+      "F": "Failure",
+      "FF": "Failure x2",
+      "T": "Threat",
+      "TT": "Threat x2",
+      "FT": "Failure|Threat",
+      "D": "Despair"
+    },
+    "fail": ["F", "FF", "FT", "D"],
+    "fail_op": "=",
+    "crit_fail": ["FF"],
+    "complication": ["T", "TT", "FT"],
+    "complication_op": "=",
+    "crit_complication": ["TT"]
+  },
   "ST" : {
     "sides": 20,
     "crit_success": 1,

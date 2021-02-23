@@ -9,9 +9,6 @@ from pprint import pformat, pprint
 from collections import defaultdict, Counter, namedtuple
 
 # FIXME:
-#           1: cf/cs don't accept multiple critical values
-#           2: r/! don't accept multiple values
-#           3: ==/~=/b=/x= will fail with multiple values that are strings
 #           4: No support for "repeat"
 #           5: Parentheses? Do these affect only sums?
 #           6: Comparisons after math, ex 2d20+2>=19
@@ -47,6 +44,8 @@ _options = r'|'.join(
         r'kl',  # keep low
         r'cs',  # critical success
         r'cf',  # critical failure
+        r'cb',  # critical boon
+        r'cx',  # critical complication
         r'!',  # explode
         r'(?<!~)<(?!=)',  # success-lt
         r'(?<!~)>(?!=)',  # success-gt
@@ -108,11 +107,13 @@ class Equation:
     @property
     def sum(self):
         total_sum = 0
+        sum_exists = False
         for op, roll in zip(self.ops, self.rolls):
+            sum_exists |= roll.sum is not None
             if op == '+':
-                total_sum += roll.sum
+                total_sum += roll.sum if roll.sum else 0
             elif op == '-':
-                total_sum -= roll.sum
+                total_sum -= roll.sum if roll.sum else 0
             else:
                 raise UnknownOperationError(op, f'Used before {roll.dice_str}')
         return total_sum
@@ -297,16 +298,17 @@ class DiceRoll:
                 try:
                     values.append(int(self.map[roll]))
                 except ValueError:
-                    raise UnknownDiceValueError(self.dice_str, roll)
+                    values = None
+                    break
         return values
 
     @property
     def sum(self):
-        return sum(self.values)
+        return sum(self.values) if self.values else None
 
     @property
     def counter(self):
-        interesting_list = [r for r in self.faces if r in self.map_values.keys()]
+        interesting_list = [r for r in self.faces if r in self.map_values.keys() or r in self.face_names.keys()]
         return Counter(interesting_list) if interesting_list else None
 
     def _decode_dice_string(self):
@@ -350,7 +352,7 @@ class DiceRoll:
         self.map_values = dice_info['value'] if 'value' in dice_info else {}
 
         self.natural_success = dice_info['success'] if 'success' in dice_info else None
-        self.natural_success_compare = dice_info['success_op'] if 'success_op' in dice_info else None
+        self.natural_success_compare = '=' + dice_info['success_op'] if 'success_op' in dice_info else None
 
         self.natural_fail = dice_info['fail'] if 'fail' in dice_info else None
         self.natural_fail_compare = '~' + dice_info['fail_op'] if 'fail_op' in dice_info else None
@@ -362,8 +364,9 @@ class DiceRoll:
         self.natural_b_compare = 'b' + dice_info['boon_op'] if 'boon_op' in dice_info else None
 
         self.natural_cs = dice_info['crit_success'] if 'crit_success' in dice_info else None
-
-        self.natural_cf = dice_info['success'] if 'success' in dice_info else None
+        self.natural_cf = dice_info['crit_fail'] if 'crit_fail' in dice_info else None
+        self.natural_cb = dice_info['crit_boon'] if 'crit_boon' in dice_info else None
+        self.natural_cc = dice_info['crit_complication'] if 'crit_complication' in dice_info else None
 
     def _parse_options(self):
         option_dict: Dict[str, Union[str, int, set]]
@@ -385,22 +388,26 @@ class DiceRoll:
             self.successes = 0
             option_dict['threshold'] = self.natural_success
             option_dict['compare'] = self.natural_success_compare
-            if self.natural_cs:
-                option_dict['crit'] = self.natural_cs
+        if self.natural_cs:
+            option_dict['crit'] = self.natural_cs
         if self.natural_fail:
             self.failures = 0
             option_dict['fail_threshold'] = self.natural_fail
             option_dict['fail_compare'] = self.natural_fail_compare
-            if self.natural_cf:
-                option_dict['crit_fail'] = self.natural_cf
+        if self.natural_cf:
+            option_dict['crit_fail'] = self.natural_cf
         if self.natural_boon:
             self.boons = 0
             option_dict['b_threshold'] = self.natural_boon
             option_dict['b_compare'] = self.natural_b_compare
+        if self.natural_cb:
+            option_dict['b_crit'] = self.natural_cb
         if self.natural_complication:
             self.complications = 0
             option_dict['c_threshold'] = self.natural_complication
             option_dict['c_compare'] = self.natural_c_compare
+        if self.natural_cc:
+            option_dict['c_crit'] = self.natural_cc
 
         if _debug:
             print(f'Parsing {option_string}')
@@ -422,14 +429,20 @@ class DiceRoll:
             # Note: This would be best replaced with a match-pattern when 3.10 becomes available
             if op == '!':
                 operand, option_string = get_operand(option_string)
-                # Explode on max roll only by default
-                explode_on = operand if operand else str(self.sides)
-                option_dict['explode'].add(explode_on)
+                if operand is None:
+                    raise MissingOperandError('Explode', f'Used in {self.dice_str}')
+                try:
+                    option_dict['explode'].add(str(int(operand)))
+                except ValueError:
+                    option_dict['explode'] |= form_face_roll_list(operand)
             elif op == 'r':
                 operand, option_string = get_operand(option_string)
                 if operand is None:
                     raise MissingOperandError('Reroll', f'Used in {self.dice_str}')
-                option_dict['reroll'].add(operand)
+                try:
+                    option_dict['reroll'].add(str(int(operand)))
+                except ValueError:
+                    option_dict['reroll'] |= form_face_roll_list(operand)
             elif op == 'k' and not keep_option_found:
                 operand, option_string = get_operand(option_string)
                 if operand is None:
@@ -465,13 +478,35 @@ class DiceRoll:
             elif op == 'cs':
                 operand, option_string = get_operand(option_string)
                 if operand is None:
-                    operand = self.map[self.sides - 1]
-                option_dict['crit'] = int(operand)
+                    raise MissingOperandError('Critical Success', f'Used in {self.dice_str}')
+                try:
+                    option_dict['crit'] = int(operand)
+                except ValueError:
+                    option_dict['crit'] |= form_roll_list(operand)
             elif op == 'cf':
                 operand, option_string = get_operand(option_string)
                 if operand is None:
                     raise MissingOperandError('CriticalFailure', f'Used in {self.dice_str}')
-                option_dict['crit_fail'] = int(operand)
+                try:
+                    option_dict['crit_fail'] = int(operand)
+                except ValueError:
+                    option_dict['crit_fail'] |= form_roll_list(operand)
+            elif op == 'cb':
+                operand, option_string = get_operand(option_string)
+                if operand is None:
+                    raise MissingOperandError('CriticalBoon', f'Used in {self.dice_str}')
+                try:
+                    option_dict['b_crit'] = int(operand)
+                except ValueError:
+                    option_dict['b_crit'] |= form_roll_list(operand)
+            elif op == 'cx':
+                operand, option_string = get_operand(option_string)
+                if operand is None:
+                    raise MissingOperandError('CriticalComplication', f'Used in {self.dice_str}')
+                try:
+                    option_dict['c_crit'] = int(operand)
+                except ValueError:
+                    option_dict['c_crit'] |= form_roll_list(operand)
             elif (op == 'x<' or op == 'x<=' or op == 'x>' or op == 'x>=') and \
                     not complication_threshold_found:
                 operand, option_string = get_operand(option_string)
@@ -506,34 +541,33 @@ class DiceRoll:
                     raise MissingOperandError('Boon', f'Used in {self.dice_str}')
                 option_dict['b_threshold'] = int(operand)
                 option_dict['b_compare'] = self.natural_c_compare
-            # FIXME: These don't work if the list has a string face
             elif op == '==' and not threshold_option_found:
                 self.successes = 0
                 operand, option_string = get_operand(option_string)
                 if operand is None:
                     raise MissingOperandError('Success', f'Used in {self.dice_str}')
-                option_dict['threshold'] |= set(map(int, operand.split(',')))
+                option_dict['threshold'] |= form_roll_list(operand)
                 option_dict['compare'] = op
             elif op == '~=' and not fail_threshold_option_found:
                 self.failures = 0
                 operand, option_string = get_operand(option_string)
                 if operand is None:
                     raise MissingOperandError('Failure', f'Used in {self.dice_str}')
-                option_dict['fail_threshold'] |= set(map(int, operand.split(',')))
+                option_dict['fail_threshold'] |= form_roll_list(operand)
                 option_dict['fail_compare'] = op
             elif op == 'b=' and not threshold_option_found:
                 self.boons = 0
                 operand, option_string = get_operand(option_string)
                 if operand is None:
                     raise MissingOperandError('Boon', f'Used in {self.dice_str}')
-                option_dict['b_threshold'] |= set(map(int, operand.split(',')))
+                option_dict['b_threshold'] |= form_roll_list(operand)
                 option_dict['b_compare'] = op
             elif op == 'x=' and not threshold_option_found:
                 self.complications = 0
                 operand, option_string = get_operand(option_string)
                 if operand is None:
                     raise MissingOperandError('Complication', f'Used in {self.dice_str}')
-                option_dict['c_threshold'] |= set(map(int, operand.split(',')))
+                option_dict['c_threshold'] |= form_roll_list(operand)
                 option_dict['c_compare'] = op
 
         if _debug:
@@ -558,13 +592,19 @@ class DiceRoll:
             _iter += 1
             assert _iter < 100, "ERROR: Iteration limit reached!"
             c = Counter(face_list)
+            if _debug:
+                pprint(c)
             new_rolls = []
             # Explode dice
             for exp_dice in option_dict['explode']:
-                print(f'Trying to explode {exp_dice}')
+                if _debug:
+                    print(f'Trying to explode {exp_dice}: x{c[exp_dice]}')
                 new_rolls.extend(roll_dice(self.sides, c[exp_dice]))
 
             new_face_list = [self.map[roll] for roll in new_rolls]
+
+            if _debug:
+                print(new_face_list)
 
             if new_face_list:
                 self.push_history()
@@ -602,76 +642,108 @@ class DiceRoll:
             thresh = option_dict['threshold']
             op = option_dict['compare']
             dub_val = option_dict['crit'] if 'crit' in option_dict else None
-            for val in self.values:
-                if op == '<':
-                    mul = 1 + int(val <= dub_val) if dub_val is not None else 1
-                    self.successes += int(val < thresh) * mul
-                elif op == '>':
-                    mul = 1 + int(val >= dub_val) if dub_val is not None else 1
-                    self.successes += int(val > thresh) * mul
-                elif op == '<=':
-                    mul = 1 + int(val <= dub_val) if dub_val is not None else 1
-                    self.successes += int(val <= thresh) * mul
-                elif op == '>=':
-                    mul = 1 + int(val >= dub_val) if dub_val is not None else 1
-                    self.successes += int(val >= thresh) * mul
-                elif op == '==':
-                    mul = 1 + int(val in dub_val) if dub_val is not None else 1
-                    self.successes += int(val in thresh) * mul
+            for face in self.faces:
+                if op == '==':
+                    mul = 1 + int(face in dub_val) if dub_val is not None else 1
+                    self.successes += int(face in thresh) * mul
+                else:
+                    try:
+                        val = self.map_values[face]
+                    except KeyError:
+                        val = int(face)
+                    if op == '<':
+                        mul = 1 + int(val <= dub_val) if dub_val is not None else 1
+                        self.successes += int(val < thresh) * mul
+                    elif op == '>':
+                        mul = 1 + int(val >= dub_val) if dub_val is not None else 1
+                        self.successes += int(val > thresh) * mul
+                    elif op == '<=':
+                        mul = 1 + int(val <= dub_val) if dub_val is not None else 1
+                        self.successes += int(val <= thresh) * mul
+                    elif op == '>=':
+                        mul = 1 + int(val >= dub_val) if dub_val is not None else 1
+                        self.successes += int(val >= thresh) * mul
 
         # Now calculate results
         if 'fail_threshold' in option_dict:
             thresh = option_dict['fail_threshold']
             op = option_dict['fail_compare']
             dub_val = option_dict['crit_fail'] if 'crit_fail' in option_dict else None
-            for val in self.values:
-                if op == '~<':
-                    mul = 1 + int(val <= dub_val) if dub_val is not None else 1
-                    self.failures += int(val < thresh) * mul
-                elif op == '~>':
-                    mul = 1 + int(val >= dub_val) if dub_val is not None else 1
-                    self.failures += int(val > thresh) * mul
-                elif op == '~<=':
-                    mul = 1 + int(val <= dub_val) if dub_val is not None else 1
-                    self.failures += int(val <= thresh) * mul
-                elif op == '~>=':
-                    mul = 1 + int(val >= dub_val) if dub_val is not None else 1
-                    self.failures += int(val >= thresh) * mul
-                elif op == '~=':
-                    mul = 1 + int(val in dub_val) if dub_val is not None else 1
-                    self.failures += int(val in thresh) * mul
+            for face in self.faces:
+                if op == '~=':
+                    mul = 1 + int(face in dub_val) if dub_val is not None else 1
+                    self.failures += int(face in thresh) * mul
+                else:
+                    try:
+                        val = self.map_values[face]
+                    except KeyError:
+                        val = int(face)
+                    if op == '~<':
+                        mul = 1 + int(val <= dub_val) if dub_val is not None else 1
+                        self.failures += int(val < thresh) * mul
+                    elif op == '~>':
+                        mul = 1 + int(val >= dub_val) if dub_val is not None else 1
+                        self.failures += int(val > thresh) * mul
+                    elif op == '~<=':
+                        mul = 1 + int(val <= dub_val) if dub_val is not None else 1
+                        self.failures += int(val <= thresh) * mul
+                    elif op == '~>=':
+                        mul = 1 + int(val >= dub_val) if dub_val is not None else 1
+                        self.failures += int(val >= thresh) * mul
 
         # Now calculate complications
         if 'c_threshold' in option_dict:
             thresh = option_dict['c_threshold']
             op = option_dict['c_compare']
-            for val in self.values:
-                if op == 'x<':
-                    self.complications += int(val < thresh)
-                elif op == 'x>':
-                    self.complications += int(val > thresh)
-                elif op == 'x<=':
-                    self.complications += int(val <= thresh)
-                elif op == 'x>=':
-                    self.complications += int(val >= thresh)
-                elif op == 'x=':
-                    self.complications += int(val in thresh)
+            dub_val = option_dict['c_crit'] if 'c_crit' in option_dict else None
+            for face in self.faces:
+                if op == 'x=':
+                    mul = 1 + int(face in dub_val) if dub_val is not None else 1
+                    self.complications += int(face in thresh) * mul
+                else:
+                    try:
+                        val = self.map_values[face]
+                    except KeyError:
+                        val = int(face)
+                    if op == 'x<':
+                        mul = 1 + int(val <= dub_val) if dub_val is not None else 1
+                        self.complications += int(val < thresh) * mul
+                    elif op == 'x>':
+                        mul = 1 + int(val >= dub_val) if dub_val is not None else 1
+                        self.complications += int(val > thresh) * mul
+                    elif op == 'x<=':
+                        mul = 1 + int(val <= dub_val) if dub_val is not None else 1
+                        self.complications += int(val <= thresh) * mul
+                    elif op == 'x>=':
+                        mul = 1 + int(val >= dub_val) if dub_val is not None else 1
+                        self.complications += int(val >= thresh) * mul
 
         # Now calculate boons
         if 'b_threshold' in option_dict:
             thresh = option_dict['b_threshold']
             op = option_dict['b_compare']
-            for val in self.values:
-                if op == 'b<':
-                    self.boons += int(val < thresh)
-                elif op == 'b>':
-                    self.boons += int(val > thresh)
-                elif op == 'b<=':
-                    self.boons += int(val <= thresh)
-                elif op == 'b>=':
-                    self.boons += int(val >= thresh)
-                elif op == 'b=':
-                    self.boons += int(val in thresh)
+            dub_val = option_dict['b_crit'] if 'b_crit' in option_dict else None
+            for face in self.faces:
+                if op == 'b=':
+                    mul = 1 + int(face in dub_val) if dub_val is not None else 1
+                    self.boons += int(face in thresh) * mul
+                else:
+                    try:
+                        val = self.map_values[face]
+                    except KeyError:
+                        val = int(face)
+                    if op == 'b<':
+                        mul = 1 + int(val <= dub_val) if dub_val is not None else 1
+                        self.boons += int(val < thresh) * mul
+                    elif op == 'b>':
+                        mul = 1 + int(val >= dub_val) if dub_val is not None else 1
+                        self.boons += int(val > thresh) * mul
+                    elif op == 'b<=':
+                        mul = 1 + int(val <= dub_val) if dub_val is not None else 1
+                        self.boons += int(val <= thresh) * mul
+                    elif op == 'b>=':
+                        mul = 1 + int(val >= dub_val) if dub_val is not None else 1
+                        self.boons += int(val >= thresh) * mul
 
     def reroll(self, idx):
         self.rolls[idx] = random.randint(0, self.sides - 1)
@@ -752,6 +824,23 @@ class MissingOperandError(Exception):
 # -------------------------------------------------------------
 #  Rolling Functions
 # -------------------------------------------------------------
+
+def form_roll_list(operand_str):
+    operand_set = set()
+    operand_str_list = operand_str.split(',')
+    for op in operand_str_list:
+        try:
+            operand_set.add(int(op))
+        except ValueError:
+            operand_set.add(op)
+
+    return operand_set
+
+
+def form_face_roll_list(operand_str):
+    operand_set = set(operand_str.split(','))
+    return operand_set
+
 
 def get_operand(option_string: str) -> Tuple[str, str]:
     _, operand, option_string = operand_pattern.split(option_string, 1)
@@ -851,9 +940,11 @@ def format_response(results: Equation):
     msg2 = '```'
     total_str = f'{results.sum}' if not skip_sum else ''
     long_rolls_flag = False
+    sum_exists_flag = False
     for idx, rolls in enumerate(results.rolls):
         sign = results.ops[idx].replace('+', '')
-        sum_str = f'  =  {sign}{rolls.sum}' if not skip_sum else ''
+        sum_exists_flag |= rolls.sum is not None
+        sum_str = f'  =  {sign}{rolls.sum}' if (not skip_sum and rolls.sum is not None) else ''
         rolls_str += f'{rolls.roll_name}\n'
         long_rolls_flag = len(rolls.rolls) > 6
         if history := rolls.roll_history:
@@ -868,6 +959,9 @@ def format_response(results: Equation):
                 + ', '.join(map(str, rolls.faces))
                 + f' ]{sum_str}\n'
         )
+    # Skip sums when there are no sums...
+    # print(f'SKIP: {skip_sum}     Exists: {sum_exists_flag}')
+    skip_sum = skip_sum | (not sum_exists_flag)
     if len(results.rolls) > 1 and not skip_sum:
         rolls_str += 'TOTAL\n'
         msg2 += total_str
@@ -881,6 +975,10 @@ def format_response(results: Equation):
     # COUNTER SECTION
     msg = ''
     if counters := results.counters:
+        face_lengths = []
+        for roll in results.rolls:
+            face_lengths.extend([len(name) for f, name in roll.face_names.items() if f in roll.faces])
+        max_face_len = max(max(face_lengths)+1, 10)
         rolls = results.rolls
         msg += '```\n'
         total_counter = Counter()
@@ -888,18 +986,19 @@ def format_response(results: Equation):
             rollname = f'{rolls[idx].num_dice}d{rolls[idx].dice_type}'
             for face, count in dict(counter).items():
                 face_name = rolls[idx].face_names[face]
-                msg += f'{rollname:<8} {face_name:<10} {count}\n'
+                msg += f'{rollname:<8} {face_name:<{max_face_len}} {count}\n'
                 rollname = ''
                 total_counter.update([face_name for x in range(count)])
 
         rollname = 'TOTAL'
         if len(results.rolls) > 1:
             for face, count in dict(total_counter).items():
-                msg += f'{rollname:<8} {face:<10} {count}\n'
+                msg += f'{rollname:<8} {face:<{max_face_len}} {count}\n'
                 rollname = ''
 
         msg += '```'
-        print(msg)
+        if _debug:
+            print(msg)
         embed.add_field(name='Roll Stats', value=msg, inline=False)
 
     if sfbc_str:
@@ -949,6 +1048,10 @@ def format_response_full(results: Equation):
     # COUNTER SECTION
     msg = ''
     if counters := results.counters:
+        face_lengths = []
+        for roll in results.rolls:
+            face_lengths.extend([len(name) for f, name in roll.face_names.items() if f in roll.faces])
+        max_face_len = max(max(face_lengths)+1, 10)
         embed.add_field(name='Roll Stats', value=_sep, inline=False)
         rolls = results.rolls
         msg += '```\n'
@@ -957,14 +1060,14 @@ def format_response_full(results: Equation):
             rollname = f'{rolls[idx].num_dice}d{rolls[idx].dice_type}'
             for face, count in dict(counter).items():
                 face_name = rolls[idx].face_names[face]
-                msg += f'{rollname:<8} {face_name:<10} {count}\n'
+                msg += f'{rollname:<8} {face_name:<{max_face_len}} {count}\n'
                 rollname = ''
                 total_counter.update([face_name for x in range(count)])
 
         rollname = 'Total'
         if len(results.rolls) > 1:
             for face, count in dict(total_counter).items():
-                msg += f'\n{rollname:<8} {face:<10} {count}\n'
+                msg += f'\n{rollname:<8} {face:<{max_face_len}} {count}'
                 rollname = ''
 
         msg += '```'
@@ -1123,9 +1226,10 @@ def format_response_full(results: Equation):
         msg2 = '```\n'
         if len(results.rolls) > 1:
             for idx, rolls in enumerate(results.rolls):
-                rolls_str_2 += f'{rolls.roll_name}\n'
-                sign = results.ops[idx].replace('+', '')
-                msg2 += f'{sign}{rolls.sum}\n'
+                if rolls.sum:
+                    rolls_str_2 += f'{rolls.roll_name}\n'
+                    sign = results.ops[idx].replace('+', '')
+                    msg2 += f'{sign}{rolls.sum}\n'
 
         rolls_str_2 += "\nTotal\n```"
         msg2 += f'\n{results.sum}\n```'
