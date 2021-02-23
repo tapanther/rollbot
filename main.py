@@ -1246,9 +1246,10 @@ def format_response_full(results: Equation):
 def create_help():
     cmd = (
         '''```
-r       Simple Roll
-rf      Verbose (Full) Roll
-h       Help
+r         Simple Roll
+rf        Verbose (Full) Roll
+h         Help
+dice [X]  List dice names | List info for dice X
 
 Roll Syntax:
     #dDICE      Roll # of DICE (case insensitive)
@@ -1403,6 +1404,17 @@ async def on_message(message):
             icon_url=message.author.avatar_url,
         )
         await message.channel.send(None, embed=response)
+
+    elif message.content.startswith('/dice'):
+        dice_name = None
+        dice_data = {key: (val['dice_name'] if 'dice_name' in val else "N/A") for key, val in _dice_types.items()}
+        if len(message.content) > 5:
+            dice_name = message.content[5:].strip().upper()
+            dice_data = _dice_types[dice_name]
+
+        msg = pformat(dice_data, indent=2, width=120)
+        msg = '```\n' + msg + '\n```'
+        await message.channel.send(msg)
 
 
 if __name__ == '__main__':

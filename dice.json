@@ -1,5 +1,6 @@
 {
   "GB": {
+    "dice_name": "Genesys Boost",
     "map": ["B", "B", "S", "SA", "AA", "A"],
     "names": {
       "B": "Blank",
@@ -15,6 +16,7 @@
     "crit_boon": ["AA"]
   },
   "GS": {
+    "dice_name": "Genesys Setback",
     "map": ["B", "B", "F", "F", "T", "T"],
     "names": {
       "B": "Blank",
@@ -27,6 +29,7 @@
     "complication_op": "="
   },
   "GA": {
+    "dice_name": "Genesys Ability",
     "map": ["B", "S", "S", "SS", "A", "A", "SA", "AA"],
     "names": {
       "B": "Blank",
@@ -44,6 +47,7 @@
     "crit_boon": ["AA"]
   },
   "GD": {
+    "dice_name": "Genesys Difficulty",
     "map": ["B", "F", "FF", "T", "T", "T", "TT", "FT"],
     "names": {
       "B": "Blank",
@@ -61,6 +65,7 @@
     "crit_complication": ["TT"]
   },
   "GP": {
+    "dice_name": "Genesys Proficiency",
     "map": ["B", "S", "S", "SS", "SS", "A", "A", "SA", "SA", "AA", "AA", "Tr"],
     "names": {
       "B": "Blank",
@@ -79,6 +84,7 @@
     "crit_boon": ["AA"]
   },
   "GC": {
+    "dice_name": "Genesys Challenge",
     "map": ["B", "F", "F", "FF", "FF", "T", "T", "FT", "FT", "TT", "TT", "D"],
     "names": {
       "B": "Blank",
@@ -97,12 +103,14 @@
     "crit_complication": ["TT"]
   },
   "ST" : {
+    "dice_name": "Modiphius 2d20",
     "sides": 20,
     "crit_success": 1,
     "complication": 20,
     "complication_op": ">="
   },
   "C": {
+    "dice_name": "Modiphius Challenge",
     "sides": 6,
     "map": [1, 2, 0, 0, "E", "E"],
     "names": {
@@ -113,6 +121,7 @@
     }
   },
   "DD": {
+    "dice_name": "D&D d20",
     "sides": 20,
     "boon": 20,
     "boon_op": ">=",
@@ -120,6 +129,7 @@
     "complication_op": "<="
   },
   "F": {
+    "dice_name": "FATE",
     "sides": 6,
     "map": ["+", "+", 0, 0, "-", "-"],
     "value": {
@@ -128,6 +138,7 @@
     }
   },
   "COIN": {
+    "dice_name": "Coin",
     "sides": 2,
     "map": ["H", "T"],
     "names": {
