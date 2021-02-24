@@ -1311,14 +1311,14 @@ kl#     Keep # lowest dice
             ~<=# : lte
             ~>#  : gt
             ~>=# : gte
-            ~==# : eq
+            ~=# : eq
 
-cs#     Count a critical success (2x) when the dice rolls:
+cs#     Critical success (2x) when the dice rolls:
             > | >= : at least #
             < | <= ; at most #
             (A success criteria must be specified)
             
-cf#     Count a critical failure (2x) when the dice rolls:
+cf#     Critical failure (2x) when the dice rolls:
             ~> | ~>= : at least #
             ~< | ~<= ; at most #
             (A failure criteria must be specified)
@@ -1341,15 +1341,18 @@ c[cmp]# Complication comparisons start with 'b'
             c>=# :gte
             c=#  : eq
 
-x#      For dice with natural complications
+b#|x#   For dice with natural complications
             2dSTx18 : STA Dice (2d20), 
                 complication on 18 instead of 20
             2dDDx2  : D&D Dice (d20), 
                 "crit fail" on 2 instead of 1
-
-b#      For dice with natural boons
             2dDDb18  : D&D Dice (d20), 
                 "critical" on 18 instead of 20
+                
+cb#|cx# Critical boon/complication (2x) when the dice rolls:
+            > | >= : at least #
+            < | <= ; at most #
+            (A compare criteria must be specified)
 ```'''
     )
 
