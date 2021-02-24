@@ -2,6 +2,7 @@ import discord
 import json
 import random
 import re
+import keep_alive
 
 from os import environ
 from datetime import datetime
@@ -1506,4 +1507,5 @@ if __name__ == '__main__':
 
     discord_token = environ['TOKEN']
     random.seed()
+    keep_alive.keep_alive()
     client.run(discord_token)
