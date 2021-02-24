@@ -876,8 +876,13 @@ def reroll_dice(roll_list, idx, sides):
 
 
 def roll_command(command_str: str):
+    cmp_op = None
+    cmp_val = None
     # Find the one comparison operator supported
-    command_str, cmp_op, cmp_val, _ = supported_comparisons.split(command_str, 1)
+    try:
+        command_str, cmp_op, cmp_val, _ = supported_comparisons.split(command_str, 1)
+    except ValueError:
+        pass
 
     # Find the math parts
     math_strings = [x.strip() for x in supported_operators.split(command_str)]
@@ -890,7 +895,7 @@ def roll_command(command_str: str):
     equation = Equation(command_str)
     equation.ops = operator_strings
     equation.final_compare = cmp_op
-    equation.final_compare_val = int(cmp_val)
+    equation.final_compare_val = int(cmp_val) if cmp_val else None
 
     equation.rolls = []
 
@@ -1252,6 +1257,7 @@ def format_response_full(results: Equation):
         embed.add_field(name='Value', value=msg3, inline=True)
 
     # SUM SECTION
+    skip_sum = skip_sum & (results.final_compare_result is None)
     if not skip_sum:
         rolls_str_2 = '```\n'
         msg2 = '```\n'
@@ -1262,8 +1268,15 @@ def format_response_full(results: Equation):
                     sign = results.ops[idx].replace('+', '')
                     msg2 += f'{sign}{rolls.sum}\n'
 
-        rolls_str_2 += "\nTotal\n```"
-        msg2 += f'\n{results.sum}\n```'
+        rolls_str_2 += "\nTotal\n"
+        msg2 += f'\n{results.sum}\n'
+
+        if results.final_compare_result is not None:
+            rolls_str_2 += f'{results.sum} {results.final_compare} {results.final_compare_val}\n'
+            msg2 += "SUCCESS" if results.final_compare_result else "FAIL"
+
+        rolls_str_2 += "```"
+        msg2 += '```'
 
         embed.add_field(name='Sum', value=_sep, inline=False)
         embed.add_field(name='Dice', value=rolls_str_2)
