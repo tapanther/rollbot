@@ -915,6 +915,7 @@ def format_response(results: Equation):
     embed_dict = {
         # 'title': 'Roll Result',
         'type': 'rich',
+        'color': 3249376,
         # 'timestamp': str(datetime.now()),
     }
 
@@ -1054,6 +1055,7 @@ def format_response_full(results: Equation):
         'title': 'Roll Result',
         'type': 'rich',
         'timestamp': str(datetime.now()),
+        'color': 3249376,
     }
 
     embed = discord.Embed.from_dict(embed_dict)
