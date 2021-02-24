@@ -1002,10 +1002,15 @@ def format_response(results: Equation):
             rolls_str += f'{results.sum} {results.final_compare} {results.final_compare_val}\n'
             msg2 += "SUCCESS" if results.final_compare_result else "FAIL"
     rolls_str += '```'
-    msg2 += '```'
+
     # embed.add_field(name='```Dice Rolls```', value=_sep, inline=False)
     if len(results.rolls) > 1:
         embed.add_field(name='Dice', value=rolls_str)
+    elif results.final_compare_result is not None:
+        result_str = "SUCCESS" if results.final_compare_result else "FAIL"
+        msg2 += f'{results.sum} {results.final_compare} {results.final_compare_val} : {result_str}\n'
+
+    msg2 += '```'
     embed.add_field(name='Rolls', value=msg2)
 
     # COUNTER SECTION
