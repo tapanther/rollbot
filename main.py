@@ -11,7 +11,6 @@ from collections import defaultdict, Counter, namedtuple
 # FIXME:
 #           4: No support for "repeat"
 #           5: Parentheses? Do these affect only sums?
-#           6: Comparisons after math, ex 2d20+2>=19
 
 _debug = False
 
@@ -32,9 +31,8 @@ simple_numeric_pattern = re.compile(
 #     r'(?P<num_dice>\d+)[dD](?P<dice_type>\d+|[A-Z]+)(?P<options>.*)'
 # )
 
-# FIXME: Not Implemented
 supported_comparisons = re.compile(
-    r' (<(?!=)|>(?!=)|<=|>=) '
+    r' +(?P<compare><(?!=)|>(?!=)|<=|>=) *(?P<cmp_val>\d+)$'
 )
 
 supported_operators = re.compile(
@@ -98,6 +96,8 @@ class Equation:
         self.original_equation_str = original_eq_str
         self.rolls: List[DiceRoll] = []
         self.ops = []
+        self.final_compare = None
+        self.final_compare_val = None
 
     @property
     def counters(self):
@@ -205,6 +205,20 @@ class Equation:
         )
 
         return result if valid else None
+
+    @property
+    def final_compare_result(self):
+        result = None
+        if self.final_compare is not None and self.final_compare_val is not None:
+            if self.final_compare == '<':
+                result = self.sum < self.final_compare_val
+            elif self.final_compare == '>':
+                result = self.sum > self.final_compare_val
+            elif self.final_compare == '<=':
+                result = self.sum <= self.final_compare_val
+            elif self.final_compare == '>=':
+                result = self.sum >= self.final_compare_val
+        return result
 
     def get_print_dict(self):
         print_dict = {
@@ -862,16 +876,25 @@ def reroll_dice(roll_list, idx, sides):
 
 
 def roll_command(command_str: str):
+    # Find the one comparison operator supported
+    command_str, cmp_op, cmp_val, _ = supported_comparisons.split(command_str, 1)
+
+    # Find the math parts
     math_strings = [x.strip() for x in supported_operators.split(command_str)]
     dice_strings = math_strings[::2]
     operator_strings = math_strings[1::2]
+    # Fix the zero'th entry to be a sum, which aligns the entries
     operator_strings.insert(0, '+')
 
+    # Create the Equation that will do the math
     equation = Equation(command_str)
     equation.ops = operator_strings
+    equation.final_compare = cmp_op
+    equation.final_compare_val = int(cmp_val)
 
     equation.rolls = []
 
+    # Creating the roll objects actually rolls the dice
     for dice_str in dice_strings:
         dice_roll_obj = DiceRoll(dice_str)
         equation.rolls.append(dice_roll_obj)
@@ -942,7 +965,7 @@ def format_response(results: Equation):
 
     rolls_str = '```\n'
     msg2 = '```'
-    total_str = f'{results.sum}' if not skip_sum else ''
+
     long_rolls_flag = False
     sum_exists_flag = False
     for idx, rolls in enumerate(results.rolls):
@@ -965,10 +988,14 @@ def format_response(results: Equation):
         )
     # Skip sums when there are no sums...
     # print(f'SKIP: {skip_sum}     Exists: {sum_exists_flag}')
-    skip_sum = skip_sum | (not sum_exists_flag)
+    total_str = f'{results.sum}\n'
+    skip_sum = (skip_sum | (not sum_exists_flag)) & (results.final_compare_result is None)
     if len(results.rolls) > 1 and not skip_sum:
         rolls_str += 'TOTAL\n'
         msg2 += total_str
+        if results.final_compare_result is not None:
+            rolls_str += f'{results.sum} {results.final_compare} {results.final_compare_val}\n'
+            msg2 += "SUCCESS" if results.final_compare_result else "FAIL"
     rolls_str += '```'
     msg2 += '```'
     # embed.add_field(name='```Dice Rolls```', value=_sep, inline=False)
@@ -1267,9 +1294,9 @@ Roll Syntax:
     1d20[options]   Apply roll options to a single d20.
                     There must not be any spaces between options
                 
-    4d6 + 2d4   Roll multiple dice and sum the results
-    1d20 + 2    Add a constant 2 to the result of a d20
-    1d20 - 4    Subtract a constant 4 from a d20
+    4d6 + 2d4      Roll multiple dice and sum the results
+    1d20 + 2       Add a constant 2 to the result of a d20
+    1d20 - 4 < 10  Compare the sum of all rolls and math
     
     Math and dice roll options can be combined:
     
