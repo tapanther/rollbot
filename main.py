@@ -3,6 +3,7 @@ import json
 import random
 import re
 
+from os import environ
 from datetime import datetime
 from typing import Optional, Tuple, List, Dict, Union, Any
 from pprint import pformat, pprint
@@ -1484,9 +1485,6 @@ async def on_message(message):
 
 
 if __name__ == '__main__':
-    with open('env.json', 'r') as env_file:
-        env = json.load(env_file)
-
     with open('dice.json', 'r') as dice_file:
         _dice_types = json.load(dice_file)
 
@@ -1506,6 +1504,6 @@ if __name__ == '__main__':
         + r')(?P<options>.*)'
     )
 
-    discord_token = env['TOKEN']
+    discord_token = environ['TOKEN']
     random.seed()
     client.run(discord_token)
