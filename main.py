@@ -32,7 +32,7 @@ simple_numeric_pattern = re.compile(
 # )
 
 supported_comparisons = re.compile(
-    r' +(?P<compare><(?!=)|>(?!=)|<=|>=) *(?P<cmp_val>\d+)$'
+    r' +(?P<compare><(?!=)|>(?!=)|<=|>=) *(?P<cmp_val>\d+) *$'
 )
 
 supported_operators = re.compile(
@@ -1458,7 +1458,7 @@ async def on_message(message):
         user_cmd = message.content[3:]
         if comment := comment_pattern.search(user_cmd):
             comment = '```\n#' + comment.group('comment') + '\n```'
-        user_cmd = comment_pattern.sub('', user_cmd, count=1)
+        user_cmd = comment_pattern.sub('', user_cmd, count=1).strip()
         results = roll_command(user_cmd)
         response = format_response_full(results)
         response.title = f'{message.author.display_name} : {user_cmd}'
