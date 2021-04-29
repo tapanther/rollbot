@@ -72,6 +72,8 @@ _options = r'|'.join(
         r'x=',  # complication-eq
         r'x(?![=<>])',  # natural-complication
         r'b(?![=<>])',  # natural
+        r'min', # minimum
+        r'max', # maximum
     ]
 )
 
@@ -101,6 +103,15 @@ class Equation:
         self.final_compare_val = None
 
     @property
+    def limit_flag(self):
+        flag = False
+        for roll in self.rolls:
+            # FIXME - Flag doesn't exist until sum is calculated at least once
+            if roll.sum is not None:
+                flag |= roll.limit_flag
+        return flag
+
+    @property
     def counters(self):
         counters = []
         for idx, roll in enumerate(self.rolls):
@@ -121,6 +132,7 @@ class Equation:
                 total_sum -= roll.sum if roll.sum else 0
             else:
                 raise UnknownOperationError(op, f'Used before {roll.dice_str}')
+
         return total_sum
 
     @property
@@ -274,6 +286,11 @@ class DiceRoll:
 
         self.natural_cf = None
 
+        self.min = None
+        self.max = None
+        self.limit_flag = False
+        self.limit_txt = ''
+
         self._roll_history = []
 
         # Do the initial property decode num_dice, dice_type, and roll_options
@@ -323,7 +340,18 @@ class DiceRoll:
 
     @property
     def sum(self):
-        return sum(self.values) if self.values else None
+        rsum = None
+        if self.values:
+            rsum = sum(self.values)
+            if self.min and (rsum < self.min):
+                rsum = self.min
+                self.limit_flag = True
+                self.limit_txt = '(min)'
+            elif self.max and (rsum > self.max):
+                rsum = self.max
+                self.limit_flag = True
+                self.limit_txt = '(max)'
+        return rsum
 
     @property
     def counter(self):
@@ -588,6 +616,16 @@ class DiceRoll:
                     raise MissingOperandError('Complication', f'Used in {self.dice_str}')
                 option_dict['c_threshold'] |= form_roll_list(operand)
                 option_dict['c_compare'] = op
+            elif op == 'min':
+                operand, option_string = get_operand(option_string)
+                if operand is None:
+                    raise MissingOperandError('Complication', f'Used in {self.dice_str}')
+                self.min = int(operand)
+            elif op == 'max':
+                operand, option_string = get_operand(option_string)
+                if operand is None:
+                    raise MissingOperandError('Complication', f'Used in {self.dice_str}')
+                self.max = int(operand)
 
         if _debug:
             pprint(option_dict, indent=2)
@@ -979,6 +1017,8 @@ def format_response(results: Equation):
         sign = results.ops[idx].replace('+', '')
         sum_exists_flag |= rolls.sum is not None
         sum_str = f'  =  {sign}{rolls.sum}' if (not skip_sum and rolls.sum is not None) else ''
+        if rolls.limit_flag:
+            sum_str += f' {rolls.limit_txt}'
         rolls_str += f'{rolls.roll_name}\n'
         long_rolls_flag = len(rolls.rolls) > 6
         if history := rolls.roll_history:
@@ -1269,15 +1309,18 @@ def format_response_full(results: Equation):
     if not skip_sum:
         rolls_str_2 = '```\n'
         msg2 = '```\n'
+        limit_txt = " (min/max)"
         if len(results.rolls) > 1:
             for idx, rolls in enumerate(results.rolls):
                 if rolls.sum:
                     rolls_str_2 += f'{rolls.roll_name}\n'
                     sign = results.ops[idx].replace('+', '')
-                    msg2 += f'{sign}{rolls.sum}\n'
+                    msg2 += f'{sign}{rolls.sum} {rolls.limit_txt}\n'
+        elif len(results.rolls) == 1 and results.limit_flag:
+            limit_txt = f' {results.rolls[0].limit_txt}'
 
         rolls_str_2 += "\nTotal\n"
-        msg2 += f'\n{results.sum}\n'
+        msg2 += f'\n{results.sum}{limit_txt if results.limit_flag else ""}\n'
 
         if results.final_compare_result is not None:
             rolls_str_2 += f'{results.sum} {results.final_compare} {results.final_compare_val}\n'
