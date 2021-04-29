@@ -371,9 +371,12 @@ class DiceRoll:
             }
         else:
             roll_match = base_roll_string.match(self.dice_str)
-            self.num_dice = int(roll_match.group('num_dice'))
-            self.dice_type = roll_match.group('dice_type')
-            self.roll_options_str = roll_match.group('options')
+            try:
+                self.num_dice = int(roll_match.group('num_dice'))
+                self.dice_type = roll_match.group('dice_type')
+                self.roll_options_str = roll_match.group('options')
+            except AttributeError:
+                raise UnknownDiceTypeError(self.dice_str)
 
             if _debug:
                 print(f'Roll Options: {self.roll_options_str}')
@@ -462,7 +465,10 @@ class DiceRoll:
         while option_string:
             # Note: _ had better be empty....
             # print(option_string)
-            _, op, option_string = option_pattern.split(option_string, 1)
+            try:
+                _, op, option_string = option_pattern.split(option_string, 1)
+            except ValueError:
+                raise UnknownOperationError(option_string)
 
             if _debug:
                 print(f'Option {op}')
@@ -1481,50 +1487,58 @@ async def on_message(message):
         embed_msg = create_help()
         await message.channel.send(None, embed=embed_msg)
 
-    elif message.content.startswith('/r '):
-        user_cmd = message.content[2:]
-        if comment := comment_pattern.search(user_cmd):
-            comment = '```\n#' + comment.group('comment') + '\n```'
-        user_cmd = comment_pattern.sub('', user_cmd, count=1)
-        results = roll_command(user_cmd)
-        response = format_response(results)
-        response.title = f'{message.author.display_name} : {user_cmd}'
-        if comment:
-            response.description = comment
-        # response.set_thumbnail(url=message.author.avatar_url)
-        response.set_author(
-            name=message.author.display_name,
-            icon_url=message.author.avatar_url,
-        )
-        await message.channel.send(None, embed=response)
+    else:
+        try:
+            if message.content.startswith('/r '):
+                user_cmd = message.content[2:]
+                if comment := comment_pattern.search(user_cmd):
+                    comment = '```\n#' + comment.group('comment') + '\n```'
+                user_cmd = comment_pattern.sub('', user_cmd, count=1)
+                results = roll_command(user_cmd)
+                response = format_response(results)
+                response.title = f'{message.author.display_name} : {user_cmd}'
+                if comment:
+                    response.description = comment
+                # response.set_thumbnail(url=message.author.avatar_url)
+                response.set_author(
+                    name=message.author.display_name,
+                    icon_url=message.author.avatar_url,
+                )
+                await message.channel.send(None, embed=response)
 
-    elif message.content.startswith('/rf '):
-        user_cmd = message.content[3:]
-        if comment := comment_pattern.search(user_cmd):
-            comment = '```\n#' + comment.group('comment') + '\n```'
-        user_cmd = comment_pattern.sub('', user_cmd, count=1).strip()
-        results = roll_command(user_cmd)
-        response = format_response_full(results)
-        response.title = f'{message.author.display_name} : {user_cmd}'
-        if comment:
-            response.description = comment
-        # response.set_thumbnail(url=message.author.avatar_url)
-        response.set_author(
-            name=message.author.display_name,
-            icon_url=message.author.avatar_url,
-        )
-        await message.channel.send(None, embed=response)
+            elif message.content.startswith('/rf '):
+                user_cmd = message.content[3:]
+                if comment := comment_pattern.search(user_cmd):
+                    comment = '```\n#' + comment.group('comment') + '\n```'
+                user_cmd = comment_pattern.sub('', user_cmd, count=1).strip()
+                results = roll_command(user_cmd)
+                response = format_response_full(results)
+                response.title = f'{message.author.display_name} : {user_cmd}'
+                if comment:
+                    response.description = comment
+                # response.set_thumbnail(url=message.author.avatar_url)
+                response.set_author(
+                    name=message.author.display_name,
+                    icon_url=message.author.avatar_url,
+                )
+                await message.channel.send(None, embed=response)
 
-    elif message.content.startswith('/dice'):
-        dice_name = None
-        dice_data = {key: (val['dice_name'] if 'dice_name' in val else "N/A") for key, val in _dice_types.items()}
-        if len(message.content) > 5:
-            dice_name = message.content[5:].strip().upper()
-            dice_data = _dice_types[dice_name]
+            elif message.content.startswith('/dice'):
+                dice_name = None
+                dice_data = {key: (val['dice_name'] if 'dice_name' in val else "N/A") for key, val in _dice_types.items()}
+                if len(message.content) > 5:
+                    dice_name = message.content[5:].strip().upper()
+                    dice_data = _dice_types[dice_name]
 
-        msg = pformat(dice_data, indent=2, width=120)
-        msg = '```\n' + msg + '\n```'
-        await message.channel.send(msg)
+                msg = pformat(dice_data, indent=2, width=120)
+                msg = '```\n' + msg + '\n```'
+                await message.channel.send(msg)
+        except (UnknownDiceTypeError,
+                UnknownDiceValueError,
+                UnknownOperationError,
+                MissingOperandError) as excp:
+            msg = '```\nERROR:\n' + str(excp) + '\n```'
+            await message.channel.send(msg)
 
 
 if __name__ == '__main__':
