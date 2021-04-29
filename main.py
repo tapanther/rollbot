@@ -73,6 +73,8 @@ _options = r'|'.join(
         r'x=',  # complication-eq
         r'x(?![=<>])',  # natural-complication
         r'b(?![=<>])',  # natural
+        r'min', # minimum
+        r'max', # maximum
     ]
 )
 
@@ -102,6 +104,15 @@ class Equation:
         self.final_compare_val = None
 
     @property
+    def limit_flag(self):
+        flag = False
+        for roll in self.rolls:
+            # FIXME - Flag doesn't exist until sum is calculated at least once
+            if roll.sum is not None:
+                flag |= roll.limit_flag
+        return flag
+
+    @property
     def counters(self):
         counters = []
         for idx, roll in enumerate(self.rolls):
@@ -122,6 +133,7 @@ class Equation:
                 total_sum -= roll.sum if roll.sum else 0
             else:
                 raise UnknownOperationError(op, f'Used before {roll.dice_str}')
+
         return total_sum
 
     @property
@@ -275,6 +287,11 @@ class DiceRoll:
 
         self.natural_cf = None
 
+        self.min = None
+        self.max = None
+        self.limit_flag = False
+        self.limit_txt = ''
+
         self._roll_history = []
 
         # Do the initial property decode num_dice, dice_type, and roll_options
@@ -324,7 +341,18 @@ class DiceRoll:
 
     @property
     def sum(self):
-        return sum(self.values) if self.values else None
+        rsum = None
+        if self.values:
+            rsum = sum(self.values)
+            if self.min and (rsum < self.min):
+                rsum = self.min
+                self.limit_flag = True
+                self.limit_txt = '(min)'
+            elif self.max and (rsum > self.max):
+                rsum = self.max
+                self.limit_flag = True
+                self.limit_txt = '(max)'
+        return rsum
 
     @property
     def counter(self):
@@ -344,9 +372,12 @@ class DiceRoll:
             }
         else:
             roll_match = base_roll_string.match(self.dice_str)
-            self.num_dice = int(roll_match.group('num_dice'))
-            self.dice_type = roll_match.group('dice_type')
-            self.roll_options_str = roll_match.group('options')
+            try:
+                self.num_dice = int(roll_match.group('num_dice'))
+                self.dice_type = roll_match.group('dice_type')
+                self.roll_options_str = roll_match.group('options')
+            except AttributeError:
+                raise UnknownDiceTypeError(self.dice_str)
 
             if _debug:
                 print(f'Roll Options: {self.roll_options_str}')
@@ -435,7 +466,10 @@ class DiceRoll:
         while option_string:
             # Note: _ had better be empty....
             # print(option_string)
-            _, op, option_string = option_pattern.split(option_string, 1)
+            try:
+                _, op, option_string = option_pattern.split(option_string, 1)
+            except ValueError:
+                raise UnknownOperationError(option_string)
 
             if _debug:
                 print(f'Option {op}')
@@ -589,6 +623,16 @@ class DiceRoll:
                     raise MissingOperandError('Complication', f'Used in {self.dice_str}')
                 option_dict['c_threshold'] |= form_roll_list(operand)
                 option_dict['c_compare'] = op
+            elif op == 'min':
+                operand, option_string = get_operand(option_string)
+                if operand is None:
+                    raise MissingOperandError('Complication', f'Used in {self.dice_str}')
+                self.min = int(operand)
+            elif op == 'max':
+                operand, option_string = get_operand(option_string)
+                if operand is None:
+                    raise MissingOperandError('Complication', f'Used in {self.dice_str}')
+                self.max = int(operand)
 
         if _debug:
             pprint(option_dict, indent=2)
@@ -980,6 +1024,8 @@ def format_response(results: Equation):
         sign = results.ops[idx].replace('+', '')
         sum_exists_flag |= rolls.sum is not None
         sum_str = f'  =  {sign}{rolls.sum}' if (not skip_sum and rolls.sum is not None) else ''
+        if rolls.limit_flag:
+            sum_str += f' {rolls.limit_txt}'
         rolls_str += f'{rolls.roll_name}\n'
         long_rolls_flag = len(rolls.rolls) > 6
         if history := rolls.roll_history:
@@ -1270,15 +1316,18 @@ def format_response_full(results: Equation):
     if not skip_sum:
         rolls_str_2 = '```\n'
         msg2 = '```\n'
+        limit_txt = " (min/max)"
         if len(results.rolls) > 1:
             for idx, rolls in enumerate(results.rolls):
                 if rolls.sum:
                     rolls_str_2 += f'{rolls.roll_name}\n'
                     sign = results.ops[idx].replace('+', '')
-                    msg2 += f'{sign}{rolls.sum}\n'
+                    msg2 += f'{sign}{rolls.sum} {rolls.limit_txt}\n'
+        elif len(results.rolls) == 1 and results.limit_flag:
+            limit_txt = f' {results.rolls[0].limit_txt}'
 
         rolls_str_2 += "\nTotal\n"
-        msg2 += f'\n{results.sum}\n'
+        msg2 += f'\n{results.sum}{limit_txt if results.limit_flag else ""}\n'
 
         if results.final_compare_result is not None:
             rolls_str_2 += f'{results.sum} {results.final_compare} {results.final_compare_val}\n'
@@ -1439,50 +1488,58 @@ async def on_message(message):
         embed_msg = create_help()
         await message.channel.send(None, embed=embed_msg)
 
-    elif message.content.startswith('/r '):
-        user_cmd = message.content[2:]
-        if comment := comment_pattern.search(user_cmd):
-            comment = '```\n#' + comment.group('comment') + '\n```'
-        user_cmd = comment_pattern.sub('', user_cmd, count=1)
-        results = roll_command(user_cmd)
-        response = format_response(results)
-        response.title = f'{message.author.display_name} : {user_cmd}'
-        if comment:
-            response.description = comment
-        # response.set_thumbnail(url=message.author.avatar_url)
-        response.set_author(
-            name=message.author.display_name,
-            icon_url=message.author.avatar_url,
-        )
-        await message.channel.send(None, embed=response)
+    else:
+        try:
+            if message.content.startswith('/r '):
+                user_cmd = message.content[2:]
+                if comment := comment_pattern.search(user_cmd):
+                    comment = '```\n#' + comment.group('comment') + '\n```'
+                user_cmd = comment_pattern.sub('', user_cmd, count=1)
+                results = roll_command(user_cmd)
+                response = format_response(results)
+                response.title = f'{message.author.display_name} : {user_cmd}'
+                if comment:
+                    response.description = comment
+                # response.set_thumbnail(url=message.author.avatar_url)
+                response.set_author(
+                    name=message.author.display_name,
+                    icon_url=message.author.avatar_url,
+                )
+                await message.channel.send(None, embed=response)
 
-    elif message.content.startswith('/rf '):
-        user_cmd = message.content[3:]
-        if comment := comment_pattern.search(user_cmd):
-            comment = '```\n#' + comment.group('comment') + '\n```'
-        user_cmd = comment_pattern.sub('', user_cmd, count=1).strip()
-        results = roll_command(user_cmd)
-        response = format_response_full(results)
-        response.title = f'{message.author.display_name} : {user_cmd}'
-        if comment:
-            response.description = comment
-        # response.set_thumbnail(url=message.author.avatar_url)
-        response.set_author(
-            name=message.author.display_name,
-            icon_url=message.author.avatar_url,
-        )
-        await message.channel.send(None, embed=response)
+            elif message.content.startswith('/rf '):
+                user_cmd = message.content[3:]
+                if comment := comment_pattern.search(user_cmd):
+                    comment = '```\n#' + comment.group('comment') + '\n```'
+                user_cmd = comment_pattern.sub('', user_cmd, count=1).strip()
+                results = roll_command(user_cmd)
+                response = format_response_full(results)
+                response.title = f'{message.author.display_name} : {user_cmd}'
+                if comment:
+                    response.description = comment
+                # response.set_thumbnail(url=message.author.avatar_url)
+                response.set_author(
+                    name=message.author.display_name,
+                    icon_url=message.author.avatar_url,
+                )
+                await message.channel.send(None, embed=response)
 
-    elif message.content.startswith('/dice'):
-        dice_name = None
-        dice_data = {key: (val['dice_name'] if 'dice_name' in val else "N/A") for key, val in _dice_types.items()}
-        if len(message.content) > 5:
-            dice_name = message.content[5:].strip().upper()
-            dice_data = _dice_types[dice_name]
+            elif message.content.startswith('/dice'):
+                dice_name = None
+                dice_data = {key: (val['dice_name'] if 'dice_name' in val else "N/A") for key, val in _dice_types.items()}
+                if len(message.content) > 5:
+                    dice_name = message.content[5:].strip().upper()
+                    dice_data = _dice_types[dice_name]
 
-        msg = pformat(dice_data, indent=2, width=120)
-        msg = '```\n' + msg + '\n```'
-        await message.channel.send(msg)
+                msg = pformat(dice_data, indent=2, width=120)
+                msg = '```\n' + msg + '\n```'
+                await message.channel.send(msg)
+        except (UnknownDiceTypeError,
+                UnknownDiceValueError,
+                UnknownOperationError,
+                MissingOperandError) as excp:
+            msg = '```\nERROR:\n' + str(excp) + '\n```'
+            await message.channel.send(msg)
 
 
 if __name__ == '__main__':
